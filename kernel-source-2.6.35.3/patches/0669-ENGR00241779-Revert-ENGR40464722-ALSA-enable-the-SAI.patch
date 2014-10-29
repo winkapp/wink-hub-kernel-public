@@ -1,0 +1,87 @@
+From d1e3073d5808ac808d0d097de12aceb0d002518f Mon Sep 17 00:00:00 2001
+From: Lionel Xu <Lionel.Xu@freescale.com>
+Date: Fri, 25 Jan 2013 15:37:53 +0800
+Subject: [PATCH 669/670] ENGR00241779: Revert "ENGR40464722 ALSA: enable the
+ SAIF by toggle the RUN bit"
+
+This reverts commit af645c810892ed96a8bced86de3a15b856a6bb5d.
+The toggle method could not be applied to mx28evk board, because it use
+saif->mclk as mclk of external codec:sgtl5000, saif->mclk is available
+only when run bit setting.
+
+Signed-off-by: Lionel Xu <r63889@freescale.com>
+---
+ sound/soc/mxs/mxs-dai.c | 45 +++++++++++++++++----------------------------
+ 1 file changed, 17 insertions(+), 28 deletions(-)
+
+diff --git a/sound/soc/mxs/mxs-dai.c b/sound/soc/mxs/mxs-dai.c
+index c0c326e..42e5a5c 100644
+--- a/sound/soc/mxs/mxs-dai.c
++++ b/sound/soc/mxs/mxs-dai.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2010-2012 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2010-2013 Freescale Semiconductor, Inc. All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -494,40 +494,29 @@ static int mxs_saif_prepare(struct snd_pcm_substream *substream,
+ static int mxs_saif_trigger(struct snd_pcm_substream *substream, int cmd,
+ 				struct snd_soc_dai *cpu_dai)
+ {
+-	void __iomem *reg_data, *reg_ctrl;
+-	struct mxs_saif *saif = (struct mxs_saif *)cpu_dai->private_data;
++	void __iomem *reg;
++	struct mxs_saif *saif_select = (struct mxs_saif *)cpu_dai->private_data;
+ 	switch (cmd) {
+ 	case SNDRV_PCM_TRIGGER_START:
+ 	case SNDRV_PCM_TRIGGER_RESUME:
+ 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+-		if (((saif->stream_mapping == PLAYBACK_SAIF0_CAPTURE_SAIF1) &&
+-			(substream->stream == SNDRV_PCM_STREAM_PLAYBACK)) ||
+-			((saif->stream_mapping == PLAYBACK_SAIF1_CAPTURE_SAIF0)
+-			&& (substream->stream == SNDRV_PCM_STREAM_CAPTURE))) {
+-			reg_data = (void __iomem *)SAIF0_DATA;
+-			reg_ctrl = (void __iomem *)SAIF0_CTRL;
+-		} else {
+-			reg_data = (void __iomem *)SAIF1_DATA;
+-			reg_ctrl = (void __iomem *)SAIF1_CTRL;
+-		}
+ 
+-		/*
+-		 * FIXME: we need to toggle the RUN bit to restart saif
+-		 * for playback, or the dma may hang abnormally in rare cases.
+-		 * For capture, we still have to read some bits from
+-		 * data register to trigger transfer.
+-		 */
+-		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+-			/* Toggle the RUN bit from 1 to 0. */
+-			writel(1, reg_ctrl + HW_SAIF_CTRL_TOG);
+-
+-			/* Toggle back the RUN bit from 0 to 1. */
+-			writel(1, reg_ctrl + HW_SAIF_CTRL_TOG);
+-		} else {
++	 if (((saif_select->stream_mapping == PLAYBACK_SAIF0_CAPTURE_SAIF1) && \
++		(substream->stream == SNDRV_PCM_STREAM_PLAYBACK)) || \
++		((saif_select->stream_mapping == PLAYBACK_SAIF1_CAPTURE_SAIF0) \
++		&& (substream->stream == SNDRV_PCM_STREAM_CAPTURE)))
++			reg = (void __iomem *)SAIF0_DATA;
++		else
++			reg = (void __iomem *)SAIF1_DATA;
++
++		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
++			/*write a data to saif data register to trigger
++				the transfer*/
++			__raw_writel(0, reg);
++		else
+ 			/*read a data from saif data register to trigger
+ 				the receive*/
+-			__raw_readl(reg_data);
+-		}
++			__raw_readl(reg);
+ 		break;
+ 	case SNDRV_PCM_TRIGGER_SUSPEND:
+ 	case SNDRV_PCM_TRIGGER_STOP:
+-- 
+1.8.0
+

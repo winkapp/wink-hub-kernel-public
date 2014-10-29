@@ -1,0 +1,222 @@
+From 0afafb46fab97f3f3dd801d372fec50b23ba2ac4 Mon Sep 17 00:00:00 2001
+From: Grace Si <b18730@freescale.com>
+Date: Tue, 13 Nov 2012 17:14:19 +0800
+Subject: [PATCH 629/670] ENGR00233391-1: [MX28] add new API to measure
+ battery temperature
+
+Add new API to measure battery temperature through LRADC
+
+Signed-off-by: Grace Si <b18730@freescale.com>
+---
+ drivers/power/mxs/ddi_bc_hw.c         |   5 +-
+ drivers/power/mxs/ddi_bc_init.c       |  11 +---
+ drivers/power/mxs/ddi_power_battery.c | 103 +++++++++++++++++++++++++++++++++-
+ drivers/power/mxs/ddi_power_battery.h |   3 +-
+ 4 files changed, 110 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/power/mxs/ddi_bc_hw.c b/drivers/power/mxs/ddi_bc_hw.c
+index f1fdb6f..d85fb23 100644
+--- a/drivers/power/mxs/ddi_bc_hw.c
++++ b/drivers/power/mxs/ddi_bc_hw.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2010 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2012 Freescale Semiconductor, Inc. All Rights Reserved.
+  */
+ 
+ /*
+@@ -303,7 +303,8 @@ void ddi_bc_hwGetDieTemp(int16_t *pLow, int16_t *pHigh)
+ 
+ ddi_bc_Status_t ddi_bc_hwGetBatteryTemp(uint16_t *pReading)
+ {
+-	return (ddi_bc_Status_t)DDI_BC_STATUS_HARDWARE_DISABLED;
++	ddi_power_GetBatteryTemp(pReading);
++  return DDI_BC_STATUS_SUCCESS;
+ }
+ 
+ 
+diff --git a/drivers/power/mxs/ddi_bc_init.c b/drivers/power/mxs/ddi_bc_init.c
+index c93f896..c36b699 100644
+--- a/drivers/power/mxs/ddi_bc_init.c
++++ b/drivers/power/mxs/ddi_bc_init.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2010 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2012 Freescale Semiconductor, Inc. All Rights Reserved.
+  */
+ 
+ /*
+@@ -14,11 +14,6 @@
+ #include "ddi_bc_internal.h"
+ 
+ 
+-/* addtogroup ddi_bc */
+-/*  @{ */
+-/*  */
+-/* Copyright (c) 2004-2005 SigmaTel, Inc. */
+-/*  */
+ /* file       ddi_bc_init.c */
+ /* brief      Contains the Battery Charger initialization function. */
+ /* date       06/2005 */
+@@ -120,9 +115,9 @@ ddi_bc_Status_t ddi_bc_Init(ddi_bc_Cfg_t *pCfg)
+ 	/* There are 8 LRADC channels. */
+ 	/*  */
+ 
+-	if (pCfg->u8BatteryTempChannel > 7) {
++	if (pCfg->u8DieTempChannel > 7)
+ 		return DDI_BC_STATUS_CFG_BAD_BATTERY_TEMP_CHANNEL;
+-	}
++
+ 	/* -------------------------------------------------------------------------- */
+ 	/* Accept the configuration. */
+ 	/* -------------------------------------------------------------------------- */
+diff --git a/drivers/power/mxs/ddi_power_battery.c b/drivers/power/mxs/ddi_power_battery.c
+index d0ef918..050f3e3 100644
+--- a/drivers/power/mxs/ddi_power_battery.c
++++ b/drivers/power/mxs/ddi_power_battery.c
+@@ -990,7 +990,7 @@ uint16_t MeasureInternalDieTemperature(void)
+ {
+ 	uint32_t  ch8Value, ch9Value, lradc_irq_mask, channel;
+ 
+-	channel = g_ddi_bc_Configuration.u8BatteryTempChannel;
++	channel = g_ddi_bc_Configuration.u8DieTempChannel;
+ 	lradc_irq_mask = 1 << channel;
+ 
+ 	/* power up internal tep sensor block */
+@@ -1063,6 +1063,101 @@ uint16_t MeasureInternalDieTemperature(void)
+ }
+ 
+ 
++/*
++ * Use the the lradc channel to get the battery temperature.
++ * A thermistor is used for external temperature sensing
++ * which attached to LRADC0. This function returns the thermister
++ * resistance value in ohm. Please check the specifiction of the
++ * thermister to convert the resistance value to temperature.
++ */
++
++#define NUM_TEMP_READINGS_TO_AVG 3
++
++uint16_t MeasureInternalBatteryTemperature(void)
++{
++	uint32_t  value, lradc_irq_mask, channel, sum = 0;
++  uint16_t  out_value;
++  int i;
++
++	channel = g_ddi_bc_Configuration.u8BatteryTempChannel;
++	lradc_irq_mask = 1 << channel;
++
++  /* Enable the temperature sensor. */
++	__raw_writel(BM_LRADC_CTRL2_TEMPSENSE_PWD,
++			REGS_LRADC_BASE + HW_LRADC_CTRL2_CLR);
++
++
++  /*Setup the temperature sensor for current measurement.
++   100uA is used for thermistor  */
++
++	__raw_writel(BF_LRADC_CTRL2_TEMP_ISRC0(BV_LRADC_CTRL2_TEMP_ISRC0__100),
++			REGS_LRADC_BASE + HW_LRADC_CTRL2_SET);
++
++	__raw_writel(BM_LRADC_CTRL2_TEMP_SENSOR_IENABLE0,
++			REGS_LRADC_BASE + HW_LRADC_CTRL2_SET);
++
++  /* Wait while the current ramps up.  */
++  msleep(1);
++
++
++  /* mux analog input lradc 0 for conversion on LRADC channel . */
++
++  __raw_writel((0xF << (4 * channel)),
++      REGS_LRADC_BASE + HW_LRADC_CTRL4_CLR);
++  __raw_writel((0 << (4 * channel)),
++      REGS_LRADC_BASE + HW_LRADC_CTRL4_SET);
++
++
++	for (i = 0; i < NUM_TEMP_READINGS_TO_AVG; i++) {
++		/* Clear the interrupt flag */
++    __raw_writel(lradc_irq_mask,
++			REGS_LRADC_BASE + HW_LRADC_CTRL1_CLR);
++    __raw_writel(BF_LRADC_CTRL0_SCHEDULE(1 << channel),
++			REGS_LRADC_BASE + HW_LRADC_CTRL0_SET);
++
++    /* Wait for conversion complete*/
++    while (!(__raw_readl(REGS_LRADC_BASE + HW_LRADC_CTRL1) & lradc_irq_mask))
++				cpu_relax();
++
++    /* Clear the interrupt flag again */
++    __raw_writel(lradc_irq_mask, REGS_LRADC_BASE + HW_LRADC_CTRL1_CLR);
++
++    /* read temperature value and clr lradc */
++    value = __raw_readl(REGS_LRADC_BASE +
++			HW_LRADC_CHn(channel)) & BM_LRADC_CHn_VALUE;
++
++    __raw_writel(BM_LRADC_CHn_VALUE,
++			REGS_LRADC_BASE + HW_LRADC_CHn_CLR(channel));
++
++    sum += value;
++  }
++
++  /* Turn off the current to the temperature sensor to save power */
++
++	__raw_writel(BF_LRADC_CTRL2_TEMP_ISRC0(BV_LRADC_CTRL2_TEMP_ISRC0__ZERO),
++			REGS_LRADC_BASE + HW_LRADC_CTRL2_SET);
++
++	__raw_writel(BM_LRADC_CTRL2_TEMP_SENSOR_IENABLE0,
++			REGS_LRADC_BASE + HW_LRADC_CTRL2_CLR);
++
++
++	/* power down temp sensor block */
++	__raw_writel(BM_LRADC_CTRL2_TEMPSENSE_PWD,
++			REGS_LRADC_BASE + HW_LRADC_CTRL2_SET);
++
++
++  /* Take the voltage average.  */
++  value = sum/NUM_TEMP_READINGS_TO_AVG;
++
++  /* convert the voltage to thermister resistance value in 10ohm.  */
++  /* ohm = (ADC value) * 1.85/(2^12) / current 100uA  */
++  value = value * 18500/4096;
++
++  out_value = value/10;
++
++	return out_value;
++}
++
+ 
+ /*  Name: ddi_power_GetBatteryMode */
+ /*  */
+@@ -1514,6 +1609,12 @@ void ddi_power_GetDieTemp(int16_t *pLow, int16_t *pHigh)
+ }
+ 
+ 
++void ddi_power_GetBatteryTemp(uint16_t *pReading)
++{
++	/* Get the reading */
++	*pReading = MeasureInternalBatteryTemperature();
++}
++
+ /*  */
+ /* brief Checks to see if the DCDC has been manually enabled */
+ /*  */
+diff --git a/drivers/power/mxs/ddi_power_battery.h b/drivers/power/mxs/ddi_power_battery.h
+index 6a25569..91130ed 100644
+--- a/drivers/power/mxs/ddi_power_battery.h
++++ b/drivers/power/mxs/ddi_power_battery.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2010 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2012 Freescale Semiconductor, Inc. All Rights Reserved.
+  */
+ 
+ /*
+@@ -60,6 +60,7 @@ uint16_t ddi_power_GetBatteryChargeCurrentThreshold(void);
+ uint16_t ddi_power_ExpressibleCurrent(uint16_t u16Current);
+ bool ddi_power_Get5vPresentFlag(void);
+ void ddi_power_GetDieTemp(int16_t *pLow, int16_t *pHigh);
++void ddi_power_GetBatteryTemp(uint16_t *pReading);
+ bool ddi_power_IsDcdcOn(void);
+ void ddi_power_SetPowerClkGate(bool bGate);
+ bool ddi_power_GetPowerClkGate(void);
+-- 
+1.8.0
+

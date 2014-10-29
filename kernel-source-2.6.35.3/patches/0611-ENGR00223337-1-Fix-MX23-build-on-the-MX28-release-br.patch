@@ -1,0 +1,37 @@
+From dec5786ff3c78e8c8872b6ede1a36697a89e6886 Mon Sep 17 00:00:00 2001
+From: Otavio Salvador <otavio@ossystems.com.br>
+Date: Sun, 5 Aug 2012 19:27:08 -0300
+Subject: [PATCH 611/670] ENGR00223337-1 Fix MX23 build on the MX28 release
+ branch
+
+Do not use safe write when building for MX23 arch.
+The change 105ae4a60 include a safe write support for use with MX23
+but does not include a dummy implementation for other architecture
+making build to fail. This add a dummy version to allow the use with
+MX23 arch.
+
+Signed-off-by: Otavio Salvador <otavio@ossystems.com.br>
+Signed-off-by: Mahesh Mahadevan <mahesh.mahadevan@freescale.com>
+---
+ arch/arm/plat-mxs/usb_common.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/arch/arm/plat-mxs/usb_common.c b/arch/arm/plat-mxs/usb_common.c
+index 700d168..5f6a121 100644
+--- a/arch/arm/plat-mxs/usb_common.c
++++ b/arch/arm/plat-mxs/usb_common.c
+@@ -53,6 +53,11 @@ static void fsl_safe_writel(u32 val32, volatile u32 *addr)
+ {
+ 	__asm__ ("swp %0, %0, [%1]" : : "r"(val32), "r"(addr));
+ }
++#else
++static void fsl_safe_writel(u32 val32, volatile u32 *addr)
++{
++	__raw_writel(val32, addr);
++}
+ #endif
+ 
+ void fsl_usb_xcvr_register(struct fsl_xcvr_ops *xcvr_ops)
+-- 
+1.8.0
+

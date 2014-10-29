@@ -1,0 +1,49 @@
+From 0c3c1577336c8d529321d53500e9d2ad87414dd3 Mon Sep 17 00:00:00 2001
+From: Peter Chen <peter.chen@freescale.com>
+Date: Mon, 22 Aug 2011 13:06:29 +0800
+Subject: [PATCH 591/670] ENGR00155144-2 mx28-usb: bugs found at customer
+ project
+
+driver part
+
+It should use safe access method to write usb controller register
+
+Signed-off-by: Peter Chen <peter.chen@freescale.com>
+---
+ drivers/usb/host/ehci.h | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/drivers/usb/host/ehci.h b/drivers/usb/host/ehci.h
+index 5735822..06ffc1e 100644
+--- a/drivers/usb/host/ehci.h
++++ b/drivers/usb/host/ehci.h
+@@ -647,6 +647,12 @@ static inline unsigned int ehci_readl(const struct ehci_hcd *ehci,
+ #endif
+ }
+ 
++#ifdef CONFIG_WORKAROUND_ARCUSB_REG_RW
++static void fsl_safe_writel(u32 val32, volatile u32 *addr)
++{
++	__asm__ ("swp %0, %0, [%1]" : : "r"(val32), "r"(addr));
++}
++#endif
+ static inline void ehci_writel(const struct ehci_hcd *ehci,
+ 		const unsigned int val, __u32 __iomem *regs)
+ {
+@@ -655,8 +661,13 @@ static inline void ehci_writel(const struct ehci_hcd *ehci,
+ 		writel_be(val, regs) :
+ 		writel(val, regs);
+ #else
++
++#ifdef CONFIG_WORKAROUND_ARCUSB_REG_RW
++	fsl_safe_writel(val, regs);
++#else
+ 	writel(val, regs);
+ #endif
++#endif
+ }
+ 
+ /*
+-- 
+1.8.0
+

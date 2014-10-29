@@ -1,0 +1,48 @@
+From 92295b7f0a1fc460bc28954ceed8ea9ec32dee77 Mon Sep 17 00:00:00 2001
+From: Grace Si <b18730@freescale.com>
+Date: Fri, 14 Dec 2012 15:16:16 +0800
+Subject: [PATCH 634/670] ENGR00237051-2: Revert "ENGR00235714-2 - MX28 USB
+ certification"
+
+This reverts commit a50f867a7c3b3251b29e184e7e7dd3d36e5c777c.
+
+system can't wake up from standby and battery charge has problem
+
+Signed-off-by: Grace Si <b18730@freescale.com>
+---
+ drivers/power/mxs/ddi_power_battery.c | 12 ------------
+ 1 file changed, 12 deletions(-)
+
+diff --git a/drivers/power/mxs/ddi_power_battery.c b/drivers/power/mxs/ddi_power_battery.c
+index 050f3e3..7494201 100644
+--- a/drivers/power/mxs/ddi_power_battery.c
++++ b/drivers/power/mxs/ddi_power_battery.c
+@@ -878,7 +878,6 @@ int ddi_power_init_battery(void)
+ {
+ 
+ 	int ret = 0;
+-	uint32_t reg;
+ 
+ 	if (!(__raw_readl(REGS_POWER_BASE + HW_POWER_5VCTRL) &&
+ 			BM_POWER_5VCTRL_ENABLE_DCDC)) {
+@@ -964,17 +963,6 @@ int ddi_power_init_battery(void)
+ #endif
+ 	}
+ 
+-#ifdef CONFIG_ARCH_MX28
+-	/* Always power VDDA from LinearReg to reduce USB jitters */
+-	reg = __raw_readl(REGS_POWER_BASE + HW_POWER_VDDACTRL);
+-	reg |= BM_POWER_VDDACTRL_ENABLE_LINREG;
+-	__raw_writel(reg, REGS_POWER_BASE + HW_POWER_VDDACTRL);
+-	mdelay(100);
+-	reg = __raw_readl(REGS_POWER_BASE + HW_POWER_VDDACTRL);
+-	reg |= BM_POWER_VDDACTRL_DISABLE_FET;
+-	 __raw_writel(reg, REGS_POWER_BASE + HW_POWER_VDDACTRL);
+-#endif
+-
+ #ifndef VDD4P2_ENABLED
+ 	/* prepare handoff */
+ 	ddi_power_init_handoff();
+-- 
+1.8.0
+

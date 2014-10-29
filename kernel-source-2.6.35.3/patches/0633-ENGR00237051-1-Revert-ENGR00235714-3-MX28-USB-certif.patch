@@ -1,0 +1,34 @@
+From 08962c92ad767ed1d271e98a650579e8540621aa Mon Sep 17 00:00:00 2001
+From: Grace Si <b18730@freescale.com>
+Date: Fri, 14 Dec 2012 15:03:53 +0800
+Subject: [PATCH 633/670] ENGR00237051-1: Revert "ENGR00235714-3 - MX28 USB
+ certification"
+
+This reverts commit 29806a5010627cbb1223a65aab5f90ca4980857c.
+
+system can't wake up from standby and battery charge has problem
+
+Signed-off-by: Grace Si <b18730@freescale.com>
+---
+ arch/arm/plat-mxs/usb_common.c | 5 -----
+ 1 file changed, 5 deletions(-)
+
+diff --git a/arch/arm/plat-mxs/usb_common.c b/arch/arm/plat-mxs/usb_common.c
+index f4ac5b6..d3d53d5 100644
+--- a/arch/arm/plat-mxs/usb_common.c
++++ b/arch/arm/plat-mxs/usb_common.c
+@@ -262,11 +262,6 @@ int usb_phy_enable(struct fsl_usb2_platform_data *pdata)
+ 	__raw_writel(tmp, phy_ctrl);
+ 	udelay(10);
+ 
+-#ifdef CONFIG_ARCH_MX28
+-	__raw_writel(0x10060605, (phy_reg + HW_USBPHY_TX));
+-	__raw_writel(0x1, (phy_reg + HW_USBPHY_RX));
+-#endif
+-
+ 	/* set UTMI xcvr */
+ 	/* Workaround an IC issue for ehci driver:
+ 	 * when turn off root hub port power, EHCI set
+-- 
+1.8.0
+

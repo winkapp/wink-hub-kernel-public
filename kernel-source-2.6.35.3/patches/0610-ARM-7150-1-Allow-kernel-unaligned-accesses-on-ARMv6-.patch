@@ -1,0 +1,36 @@
+From a260b52468a5b8c8c13b3b56f5ebee6fed758b75 Mon Sep 17 00:00:00 2001
+From: Catalin Marinas <catalin.marinas@arm.com>
+Date: Mon, 7 Nov 2011 18:05:53 +0100
+Subject: [PATCH 610/670] ARM: 7150/1: Allow kernel unaligned accesses on
+ ARMv6+ processors
+
+Recent gcc versions generate unaligned accesses by default on ARMv6 and
+later processors. This patch ensures that the SCTLR.A bit is always
+cleared on such processors to avoid kernel traping before
+alignment_init() is called.
+
+Signed-off-by: Catalin Marinas <catalin.marinas@arm.com>
+Tested-by: John Linn <John.Linn@xilinx.com>
+Acked-by: Nicolas Pitre <nico@linaro.org>
+Cc: stable@vger.kernel.org
+Signed-off-by: Russell King <rmk+kernel@arm.linux.org.uk>
+---
+ arch/arm/kernel/head.S | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm/kernel/head.S b/arch/arm/kernel/head.S
+index b173bb6..80eeb9b 100644
+--- a/arch/arm/kernel/head.S
++++ b/arch/arm/kernel/head.S
+@@ -160,7 +160,7 @@ __secondary_data:
+  * registers.
+  */
+ __enable_mmu:
+-#ifdef CONFIG_ALIGNMENT_TRAP
++#if defined(CONFIG_ALIGNMENT_TRAP) && __LINUX_ARM_ARCH__ < 6
+ 	orr	r0, r0, #CR_A
+ #else
+ 	bic	r0, r0, #CR_A
+-- 
+1.8.0
+

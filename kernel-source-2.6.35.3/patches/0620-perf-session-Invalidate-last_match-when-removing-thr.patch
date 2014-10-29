@@ -1,0 +1,42 @@
+From 1a966ce99b061876f5f34ed79a4b3f9b490ec309 Mon Sep 17 00:00:00 2001
+From: Arnaldo Carvalho de Melo <acme@redhat.com>
+Date: Mon, 2 Aug 2010 18:59:28 -0300
+Subject: [PATCH 620/670] perf session: Invalidate last_match when removing
+ threads from rb_tree
+
+[ upstream commit 70597f21f128b7dd6a2490078bea99d704b6f8c3 ]
+
+If we receive two PERF_RECORD_EXIT for the same thread, we can end up
+reusing session->last_match and trying to remove the thread twice from
+the rb_tree, causing a segfault, so invalidade last_match in
+perf_session__remove_thread.
+
+Receiving two PERF_RECORD_EXIT for the same thread is a bug, but its a
+harmless one if we make the tool more robust, like this patch does.
+
+Cc: Frederic Weisbecker <fweisbec@gmail.com>
+Cc: Mike Galbraith <efault@gmx.de>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Stephane Eranian <eranian@google.com>
+LKML-Reference: <new-submission>
+Signed-off-by: Arnaldo Carvalho de Melo <acme@redhat.com>
+Signed-off-by: Andi Kleen <ak@linux.intel.com>
+---
+ tools/perf/util/session.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/tools/perf/util/session.c b/tools/perf/util/session.c
+index c422cd6..af094a2 100644
+--- a/tools/perf/util/session.c
++++ b/tools/perf/util/session.c
+@@ -134,6 +134,7 @@ void perf_session__delete(struct perf_session *self)
+ 
+ void perf_session__remove_thread(struct perf_session *self, struct thread *th)
+ {
++	self->last_match = NULL;
+ 	rb_erase(&th->rb_node, &self->threads);
+ 	/*
+ 	 * We may have references to this thread, for instance in some hist_entry
+-- 
+1.8.0
+

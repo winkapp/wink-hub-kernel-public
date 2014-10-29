@@ -1,0 +1,318 @@
+From c81f52ec0aa79e62b645fb2ea1500d44e76b5ffa Mon Sep 17 00:00:00 2001
+From: Grace Si <b18730@freescale.com>
+Date: Wed, 5 Dec 2012 11:53:57 +0800
+Subject: [PATCH 631/670] ENGR00209679-1: [MX28] When change bus frequency,
+ randomly system hangs
+
+Fix MX28 bus freq change issue
+
+Signed-off-by: Grace Si <b18730@freescale.com>
+---
+ arch/arm/mach-mx28/clock.c | 90 ++++++++++++++++++++++++++++++++++------------
+ arch/arm/mach-mx28/emi.S   | 72 ++++++++++++++++++-------------------
+ 2 files changed, 103 insertions(+), 59 deletions(-)
+
+diff --git a/arch/arm/mach-mx28/clock.c b/arch/arm/mach-mx28/clock.c
+index 9797d1f..8219c4e 100644
+--- a/arch/arm/mach-mx28/clock.c
++++ b/arch/arm/mach-mx28/clock.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2009-2010 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2009-2012 Freescale Semiconductor, Inc. All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -24,9 +24,8 @@
+ #include <linux/delay.h>
+ #include <linux/iram_alloc.h>
+ #include <linux/platform_device.h>
+-
++#include <asm/mach/map.h>
+ #include <mach/clock.h>
+-
+ #include "regs-clkctrl.h"
+ #include "regs-digctl.h"
+ #include "emi_settings.h"
+@@ -41,7 +40,14 @@
+ #define BM_SAIF_STAT_BUSY       0x00000001
+ #define CLKCTRL_BASE_ADDR IO_ADDRESS(CLKCTRL_PHYS_ADDR)
+ #define DIGCTRL_BASE_ADDR IO_ADDRESS(DIGCTL_PHYS_ADDR)
+-
++#define APBH_BASE_ADDR IO_ADDRESS(APBH_DMA_PHYS_ADDR)
++#define APBX_BASE_ADDR IO_ADDRESS(APBX_DMA_PHYS_ADDR)
++#define LCDIF_BASE_ADDR IO_ADDRESS(LCDIF_PHYS_ADDR)
++
++void (*f) (struct mxs_emi_scaling_data *, unsigned int *, unsigned int);
++static bool flag;
++void *dvfs_iram_base;
++unsigned int iram_paddr, iram_vaddr;
+ /* external clock input */
+ static struct clk xtal_clk[];
+ static unsigned long xtal_clk_rate[3] = { 24000000, 24000000, 32000 };
+@@ -67,7 +73,7 @@ static bool mx28_enable_h_autoslow(bool enable)
+ 		__raw_writel(BM_CLKCTRL_HBUS_ASM_ENABLE,
+ 			CLKCTRL_BASE_ADDR + HW_CLKCTRL_HBUS_SET);
+ 	else
+-		__raw_writel(BM_CLKCTRL_HBUS_ASM_ENABLE,
++	__raw_writel(BM_CLKCTRL_HBUS_ASM_ENABLE,
+ 			CLKCTRL_BASE_ADDR + HW_CLKCTRL_HBUS_CLR);
+ 	return currently_enabled;
+ }
+@@ -880,19 +886,19 @@ static unsigned long emi_round_rate(struct clk *clk, unsigned long rate)
+ 
+ static int emi_set_rate(struct clk *clk, unsigned long rate)
+ {
+-	int i;
+ 	struct mxs_emi_scaling_data emi;
+-	unsigned long iram_phy;
+-	void (*f) (struct mxs_emi_scaling_data *, unsigned int *);
+-	f = iram_alloc((unsigned int)mxs_ram_freq_scale_end -
+-		(unsigned int)mxs_ram_freq_scale, &iram_phy);
+-	if (NULL == f) {
+-		pr_err("%s Not enough iram\n", __func__);
+-		return -ENOMEM;
++	volatile unsigned int StateX, StateH;
++	volatile unsigned int APBHCTRL_Backup, APBXCTRL_Backup;
++	unsigned int i;
++
++	if (!flag) {
++		iram_vaddr = (unsigned long)iram_alloc(SZ_4K, &iram_paddr);
++		iram_vaddr = __arm_ioremap(iram_paddr, SZ_4K, MT_UNCACHED);
++		memcpy(iram_vaddr, mxs_ram_freq_scale, SZ_4K);
++		f = (void *)iram_vaddr;
++		flag = true;
+ 	}
+-	memcpy(f, mxs_ram_freq_scale,
+-	       (unsigned int)mxs_ram_freq_scale_end -
+-	       (unsigned int)mxs_ram_freq_scale);
++
+ #ifdef CONFIG_MEM_mDDR
+ 	if (rate <= 24000000) {
+ 		emi.emi_div = 20;
+@@ -915,7 +921,7 @@ static int emi_set_rate(struct clk *clk, unsigned long rate)
+ 		emi.emi_div = 3;
+ 		emi.frac_div = 22;
+ 		emi.new_freq = 133;
+-		DDR2EmiController_EDE1116_133MHz();
++		DDR2EmiController_EDE1116_200MHz();
+ 	} else if (rate <= 166000000) {
+ 		emi.emi_div = 2;
+ 		emi.frac_div = 27;
+@@ -931,17 +937,57 @@ static int emi_set_rate(struct clk *clk, unsigned long rate)
+ 
+ 	local_irq_disable();
+ 	local_fiq_disable();
+-	f(&emi, get_current_emidata());
++
++	APBHCTRL_Backup = __raw_readl(APBH_BASE_ADDR + 0x30);
++	__raw_writel(0xffff & 0x0000FFFF, APBH_BASE_ADDR + 0x34);
++
++	APBXCTRL_Backup = __raw_readl(APBX_BASE_ADDR + 0x30);
++	__raw_writel(0xffff & 0x0000FFFF, APBX_BASE_ADDR + 0x34);
++
++	/* Wating all channel data transfers, PIO words
++	 * and the DMA descriptor fetching stop */
++	for (i = 0; i < 16; i++) {
++		StateX = __raw_readl(APBX_BASE_ADDR + 0x150 + i * 0x70) & 0x1F;
++		while ((StateX != 0x00) && (StateX != 0x0C) &&
++			(StateX != 0x0D) && (StateX != 0x1E)) {
++			StateX = __raw_readl(APBX_BASE_ADDR + 0x150 + i * 0x70) & 0x1F;
++		}
++
++		StateH = __raw_readl(APBH_BASE_ADDR + 0x150 + i * 0x70) & 0x1F;
++		while ((StateH != 0x00) && (StateH != 0x0C) &&
++			(StateH != 0x0D) && (StateH != 0x1E)) {
++			StateH = __raw_readl(APBH_BASE_ADDR + 0x150 + i * 0x70) & 0x1F;
++		}
++	}
++
++	while (__raw_readl(LCDIF_BASE_ADDR + 0x10) & (0x1 << 9) == 0)
++	;
++	/* Disable LCDIF to make sure it will not access DDR
++     while EMI freq change
++  */
++	__raw_writel(0x1, LCDIF_BASE_ADDR + 0x8);
++
++	f(&emi, get_current_emidata(), iram_vaddr);
++
++	/* Enable LCDIF */
++	__raw_writel(0x1, LCDIF_BASE_ADDR + 0x4);
++
++	/* Unfreeze APBH, APBX channel */
++	__raw_writel((~APBHCTRL_Backup) & 0x0000FFFF, APBH_BASE_ADDR + 0x38);
++	__raw_writel((~APBXCTRL_Backup) & 0x0000FFFF, APBX_BASE_ADDR + 0x38);
++
++	/* Wait till unFreeze happen */
++	while (__raw_readl(APBH_BASE_ADDR + 0x30) != APBHCTRL_Backup)
++   ;
++	while (__raw_readl(APBX_BASE_ADDR + 0x30) != APBXCTRL_Backup)
++   ;
++
+ 	local_fiq_enable();
+ 	local_irq_enable();
+-	iram_free(iram_phy,
+-		(unsigned int)mxs_ram_freq_scale_end -
+-	       (unsigned int)mxs_ram_freq_scale);
+ 
+ 	for (i = 10000; i; i--)
+ 		if (!clk_is_busy(clk))
+ 			break;
+-
+ 	if (!i) {
+ 		printk(KERN_ERR "couldn't set up EMI divisor\n");
+ 		return -ETIMEDOUT;
+diff --git a/arch/arm/mach-mx28/emi.S b/arch/arm/mach-mx28/emi.S
+index ec25b4e..8d794a0 100644
+--- a/arch/arm/mach-mx28/emi.S
++++ b/arch/arm/mach-mx28/emi.S
+@@ -3,7 +3,7 @@
+  *
+  * Author: Vitaly Wool <vital@embeddedalley.com>
+  *
+- * Copyright 2008-2010 Freescale Semiconductor, Inc.
++ * Copyright 2008-2012 Freescale Semiconductor, Inc.
+  * Copyright 2008 Embedded Alley Solutions, Inc All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+@@ -38,17 +38,19 @@
+ 
+ .align 8
+ ENTRY(mxs_ram_freq_scale)
+-	stmfd	sp!, {r1 - r10, lr}
++	stmfd	sp!, {r1 - r12, lr}
+ 	ldr	r5, [r0, #SCALING_DATA_NEW_FREQ_OFFSET]
+ 	ldr	r6, [r0, #SCALING_DATA_CUR_FREQ_OFFSET]
+ 	ldr	r7, [r0, #SCALING_DATA_EMI_DIV_OFFSET]
+ 	mov	r7, r7,	LSL #BP_CLKCTRL_EMI_DIV_EMI
+ 	ldr	r8, [r0, #SCALING_DATA_FRAC_DIV_OFFSET]
+ 	mov	r8, r8,	LSL #BP_CLKCTRL_FRAC0_EMIFRAC
++	add	r2, r2, #0xC00
++	mov	r12, r2
+ 
+ 	@copy memory setting to iram
+ 	mov	r2, #MX28_DRAMCTRLREGNUM
+-	adr	r0, __mx28_emisetting
++	mov	r0, r12
+ 1:	ldr	r3, [r1]
+ 	str 	r3, [r0]
+ 	add 	r0, r0, #4
+@@ -56,31 +58,49 @@ ENTRY(mxs_ram_freq_scale)
+ 	subs 	r2, r2, #1
+ 	bne 1b
+ 
+-	@set temp static to iram.
+-	adr	r9, __mxs_temp_stack
+-
+-	@ clean cache
+-	ldr	r1, __mxs_flush_cache_addr
++	ldr r1, =arm926_flush_kern_cache_all
++	stmfd sp!, {r1-r12,lr}
+ 	mov	lr, pc
+ 	mov	pc, r1
++	ldmfd sp!, {r1-r12,lr}
+ 
+ 	mov r2, #MX28_SOC_IO_ADDRESS(CLKCTRL_PHYS_ADDR)&0xFF
+ 	orr r2, r2,  #MX28_SOC_IO_ADDRESS(CLKCTRL_PHYS_ADDR)&0xFF00
+ 	orr r2, r2,  #MX28_SOC_IO_ADDRESS(CLKCTRL_PHYS_ADDR)&0xFF0000
+ 	orr r2, r2,  #MX28_SOC_IO_ADDRESS(CLKCTRL_PHYS_ADDR)&0xFF000000
+ 
+-	mov r0, r2
+-	bl lock_vector_tlb
+-
+ 	mov r0, #MX28_SOC_IO_ADDRESS(DRAM_PHYS_ADDR)&0xFF
+ 	orr r0, r0, #MX28_SOC_IO_ADDRESS(DRAM_PHYS_ADDR)&0xFF00
+ 	orr r0, r0, #MX28_SOC_IO_ADDRESS(DRAM_PHYS_ADDR)&0xFF0000
+ 	orr r0, r0, #MX28_SOC_IO_ADDRESS(DRAM_PHYS_ADDR)&0xFF000000
+ 
++	mov r3, r12
++
++	mov r1, #0x0
++        mcr p15,0,r1,c7,c10,4    @ invalidate TLB single entry to ensure that
++
++        mcr p15,0,r0,c8,c7,1    @ invalidate TLB single entry to ensure that
++                                @ LockAddr is not already in the TLB
++        mcr p15,0,r2,c8,c7,1    @ invalidate TLB single entry to ensure that
++                                @ LockAddr is not already in the TLB
++        mcr p15,0,r3,c8,c7,1    @ invalidate TLB single entry to ensure that
++                                @ LockAddr is not already in the TLB
++        mrc p15,0,r1,c10,c0,0   @ read the lockdown register
++        orr r1,r1,#1            @ set the preserve bit
++        mcr p15,0,r1,c10,c0,0   @ write to the lockdown register
++        ldr r1,[r0]             @ TLB will miss, and entry will be loaded
++        ldr r1,[r2]             @ TLB will miss, and entry will be loaded
++        ldr r1,[r3]             @ TLB will miss, and entry will be loaded
++        mrc p15,0,r1,c10,c0,0   @ read the lockdown register (victim will have
++                                @ incremented)
++        bic r1,r1,#1            @ clear preserve bit
++        mcr p15,0,r1,c10,c0,0   @ write to the lockdown registerADR r1,LockAddr
++	@bl lock_vector_tlb
+ 	@ Make sure emi not busy
+ 2:
+ 	ldr r1, [r0, #HW_DRAM_CTL08]
+-	tst r1, #BM_DRAM_CTL08_CONTROLLER_BUSY
++	and r1, #BM_DRAM_CTL08_CONTROLLER_BUSY
++	cmp r1, #0x0
+ 	bne 2b
+ 
+ 	@ put DRAM into self refresh
+@@ -141,7 +161,7 @@ ENTRY(mxs_ram_freq_scale)
+ 
+ 	@copy memory setting to iram
+ 	mov     r3, r0
+-	adr     r4, __mx28_emisetting
++	mov     r4, r12
+ 	mov 	r6, #MX28_DRAMCTRLREGNUM
+ 8:	ldr     r5, [r4]
+ 	str     r5, [r3]
+@@ -165,7 +185,6 @@ ENTRY(mxs_ram_freq_scale)
+ 	tst r1, #BM_DRAM_CTL21_DLLLOCKREG
+ 	beq 9b
+ 
+-
+     	@11. Exit Memory self-refresh
+ 	ldr r1, [r0, #HW_DRAM_CTL17]
+ 	bic r1, r1, #BM_DRAM_CTL17_SREFRESH
+@@ -183,37 +202,16 @@ ENTRY(mxs_ram_freq_scale)
+ 	orr	r2, r2, #MX28_SOC_IO_ADDRESS(DIGCTL_PHYS_ADDR)&0xFF000000
+ 
+ 	ldr 	r0, [r2, #HW_DIGCTL_MICROSECONDS];
+-	add	r0, #100
++	add	r0, #1000
+ 11:	ldr	r1, [r2, #HW_DIGCTL_MICROSECONDS];
+ 	cmp	r1, r0
+ 	blt	11b
+ 
+ @ restore regs and return
+-	ldmfd   sp!, {r1 - r10, lr}
++	ldmfd   sp!, {r1 - r12, lr}
+ 	mov	pc, lr
+ 
+ 	.space	0x100
+-__mxs_temp_stack:
+-	.word	0
+-__mx28_emisetting:
+-	.space MX28_DRAMCTRLREGNUM*4
+-
+-lock_vector_tlb:
+-        mov r1, r0 @ set r1 to the value of the address to be locked down
+-        mcr p15,0,r1,c8,c7,1    @ invalidate TLB single entry to ensure that
+-                                @ LockAddr is not already in the TLB
+-        mrc p15,0,r0,c10,c0,0   @ read the lockdown register
+-        orr r0,r0,#1            @ set the preserve bit
+-        mcr p15,0,r0,c10,c0,0   @ write to the lockdown register
+-        ldr r1,[r1]             @ TLB will miss, and entry will be loaded
+-        mrc p15,0,r0,c10,c0,0   @ read the lockdown register (victim will have
+-                                @ incremented)
+-        bic r0,r0,#1            @ clear preserve bit
+-        mcr p15,0,r0,c10,c0,0   @ write to the lockdown registerADR r1,LockAddr
+-        mov pc,lr
+-
+-__mxs_flush_cache_addr:
+-	.word	arm926_flush_kern_cache_all
+ 
+ ENTRY(mxs_ram_funcs_sz)
+ 	.word	. - mxs_ram_freq_scale
+-- 
+1.8.0
+

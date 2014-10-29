@@ -1,0 +1,90 @@
+From 914558e17e95a55ac1eac9a6c219d17d7825f715 Mon Sep 17 00:00:00 2001
+From: Jacky Leung <b18719@freescale.com>
+Date: Fri, 25 Jan 2013 17:04:07 +0800
+Subject: [PATCH 670/670] ENGR00239575: mx28-usb: fixed msc cannot work after
+ resumed from mem mode.
+
+USB PHY cannot operate after cut off the power by mem suspend, so soft reset
+and power it up when resume from mem.
+
+Signed-off-by: Jacky Leung <b18719@freescale.com>
+---
+ arch/arm/mach-mx28/pm.c | 36 +++++++++++++++++++++++++++++++++++-
+ 1 file changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/mach-mx28/pm.c b/arch/arm/mach-mx28/pm.c
+index 3ce5798..ac302a9 100644
+--- a/arch/arm/mach-mx28/pm.c
++++ b/arch/arm/mach-mx28/pm.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2010-2012 Freescale Semiconductor, Inc.
++ * Copyright (C) 2010-2013 Freescale Semiconductor, Inc.
+  * Copyright 2008 Embedded Alley Solutions, Inc All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+@@ -41,6 +41,7 @@
+ #include <mach/regs-pwm.h>
+ #include <mach/regs-rtc.h>
+ #include <mach/../../regs-icoll.h>
++#include <mach/../../regs-usbphy.h>
+ #include "regs-dram.h"
+ #include "mx28_pins.h"
+ #include "mx28evk.h"
+@@ -60,6 +61,7 @@ static int saved_sleep_state;
+ #define MAX_POWEROFF_CODE_SIZE (6 * 1024)
+ #define REGS_CLKCTRL_BASE IO_ADDRESS(CLKCTRL_PHYS_ADDR)
+ #define REGS_ICOLL_BASE IO_ADDRESS(ICOLL_PHYS_ADDR)
++#define REGS_USBPHY0_BASE IO_ADDRESS(USBPHY0_PHYS_ADDR)
+ #define dbgc(ch) __raw_writel(ch, IO_ADDRESS(0x80074000));
+ inline void dbgnum(u32 num)
+ {
+@@ -77,6 +79,36 @@ int dma_apbh_resume(void);
+ int dma_apbx_suspend(void);
+ int dma_apbx_resume(void);
+ 
++#ifdef CONFIG_MX28_SUSPEND_TO_RAM
++static void usb0_power_up_handler(void)
++{
++	void __iomem *phy_reg = REGS_USBPHY0_BASE;
++	int tmp;
++
++	/* Reset USBPHY module */
++	tmp = __raw_readl(phy_reg + HW_USBPHY_CTRL);
++	tmp |= BM_USBPHY_CTRL_SFTRST;
++	__raw_writel(tmp, phy_reg + HW_USBPHY_CTRL);
++	udelay(10);
++
++	/* Remove CLKGATE and SFTRST */
++	tmp = __raw_readl(phy_reg + HW_USBPHY_CTRL);
++	tmp &= ~(BM_USBPHY_CTRL_CLKGATE | BM_USBPHY_CTRL_SFTRST);
++	__raw_writel(tmp, phy_reg + HW_USBPHY_CTRL);
++	udelay(10);
++
++	/* Power up the PHY */
++	__raw_writel(0, phy_reg + HW_USBPHY_PWD);
++
++	__raw_writel(BM_USBPHY_CTRL_ENAUTOSET_USBCLKS
++		| BM_USBPHY_CTRL_ENAUTOCLR_PHY_PWD
++		| BM_USBPHY_CTRL_ENAUTOCLR_CLKGATE
++		| BM_USBPHY_CTRL_ENAUTOCLR_USBCLKGATE
++		| BM_USBPHY_CTRL_ENAUTO_PWRON_PLL,
++		phy_reg + HW_USBPHY_CTRL_SET);
++}
++#endif
++
+ static inline void do_standby(void)
+ {
+ 	void (*mx28_cpu_standby_ptr) (void);
+@@ -367,6 +399,8 @@ static noinline void do_mem(void)
+ 
+   __raw_writel(BM_POWER_CTRL_PSWITCH_IRQ, REGS_POWER_BASE + HW_POWER_CTRL_CLR);
+ 
++  usb0_power_up_handler();
++
+   printk(KERN_NOTICE "wake up \r\n");
+ #else
+   printk(KERN_NOTICE "\r\nnot supported \r\n");
+-- 
+1.8.0
+

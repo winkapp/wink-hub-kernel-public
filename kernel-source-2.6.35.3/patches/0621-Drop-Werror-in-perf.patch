@@ -1,0 +1,29 @@
+From 0ea8cb9453379388f870f9b8d13269fb9dc0761c Mon Sep 17 00:00:00 2001
+From: Andi Kleen <andi@firstfloor.org>
+Date: Mon, 1 Aug 2011 13:55:00 -0700
+Subject: [PATCH 621/670] Drop -Werror in perf
+
+Drop -Werror in perf Makefile. This fixes the build with gcc 4.5.x
+
+Not in mainline.
+Signed-off-by: Andi Kleen <ak@linux.intel.com>
+---
+ tools/perf/Makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tools/perf/Makefile b/tools/perf/Makefile
+index d75c28a..854652a 100644
+--- a/tools/perf/Makefile
++++ b/tools/perf/Makefile
+@@ -225,7 +225,7 @@ ifndef PERF_DEBUG
+   CFLAGS_OPTIMIZE = -O6
+ endif
+ 
+-CFLAGS = -ggdb3 -Wall -Wextra -std=gnu99 -Werror $(CFLAGS_OPTIMIZE) -D_FORTIFY_SOURCE=2 $(EXTRA_WARNINGS) $(EXTRA_CFLAGS)
++CFLAGS = -ggdb3 -Wall -Wextra -std=gnu99 $(CFLAGS_OPTIMIZE) -D_FORTIFY_SOURCE=2 $(EXTRA_WARNINGS) $(EXTRA_CFLAGS)
+ EXTLIBS = -lpthread -lrt -lelf -lm
+ ALL_CFLAGS = $(CFLAGS) -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64
+ ALL_LDFLAGS = $(LDFLAGS)
+-- 
+1.8.0
+

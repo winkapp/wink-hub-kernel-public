@@ -1,0 +1,29 @@
+From d1ac52c4c96ad626b67814878e6775f0d67a5b8a Mon Sep 17 00:00:00 2001
+From: Peter Chen <peter.chen@freescale.com>
+Date: Tue, 8 Jan 2013 10:15:35 +0800
+Subject: [PATCH 661/670] ENGR00238974-3: mx28-usb: Fix the bug of incorrect
+ data type of wakeup_event
+
+It should be enum usb_wakeup_event
+
+Signed-off-by: Peter Chen <peter.chen@freescale.com>
+---
+ include/linux/fsl_devices.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/include/linux/fsl_devices.h b/include/linux/fsl_devices.h
+index 401fd60..6c6d1f3 100644
+--- a/include/linux/fsl_devices.h
++++ b/include/linux/fsl_devices.h
+@@ -113,7 +113,7 @@ struct fsl_usb2_platform_data {
+ 	unsigned			already_suspended:1;
+ 	unsigned            lowpower:1;
+ 	unsigned            irq_delay:1;
+-	unsigned            wakeup_event:1;
++	enum usb_wakeup_event            wakeup_event;
+ 	struct fsl_usb2_wakeup_platform_data *wakeup_pdata;
+ 
+ 	u32				id_gpio;
+-- 
+1.8.0
+

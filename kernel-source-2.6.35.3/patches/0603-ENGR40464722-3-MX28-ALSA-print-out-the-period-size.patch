@@ -1,0 +1,27 @@
+From 0122386929195fe1ead959654541d303c4026b25 Mon Sep 17 00:00:00 2001
+From: Huang Shijie <b32955@freescale.com>
+Date: Thu, 5 Jul 2012 16:06:52 +0800
+Subject: [PATCH 603/670] ENGR40464722-3 MX28 ALSA: print out the period size
+
+Print out the period size for debug.
+
+Signed-off-by: Huang Shijie <b32955@freescale.com>
+---
+ sound/soc/mxs/mxs-pcm.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/sound/soc/mxs/mxs-pcm.c b/sound/soc/mxs/mxs-pcm.c
+index 41a7470..cb70ad2 100644
+--- a/sound/soc/mxs/mxs-pcm.c
++++ b/sound/soc/mxs/mxs-pcm.c
+@@ -268,6 +268,7 @@ static int mxs_pcm_hw_params(struct snd_pcm_substream *substream,
+ 	struct mxs_runtime_data *prtd = substream->runtime->private_data;
+ 
+ 	prtd->dma_period = params_period_bytes(hw_params);
++	pr_debug("The period size is :%d\n", prtd->dma_period);
+ 	prtd->dma_totsize = params_buffer_bytes(hw_params);
+ 	prtd->format = params_format(hw_params);
+ 
+-- 
+1.8.0
+

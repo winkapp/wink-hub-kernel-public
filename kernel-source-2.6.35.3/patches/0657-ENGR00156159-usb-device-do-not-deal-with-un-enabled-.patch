@@ -1,0 +1,31 @@
+From 035700f8290a6991896600c744c1272bd68a8167 Mon Sep 17 00:00:00 2001
+From: Peter Chen <peter.chen@freescale.com>
+Date: Wed, 7 Sep 2011 09:46:08 +0800
+Subject: [PATCH 657/670] ENGR00156159 usb-device: do not deal with un-enabled
+ device interrupt
+
+Do not deal with un-enabled device interrupt
+
+Signed-off-by: Peter Chen <peter.chen@freescale.com>
+---
+ drivers/usb/gadget/arcotg_udc.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/usb/gadget/arcotg_udc.c b/drivers/usb/gadget/arcotg_udc.c
+index 81a1b53..34944c9 100644
+--- a/drivers/usb/gadget/arcotg_udc.c
++++ b/drivers/usb/gadget/arcotg_udc.c
+@@ -2174,6 +2174,10 @@ static irqreturn_t fsl_udc_irq(int irq, void *_udc)
+ 	/* Clear notification bits */
+ 	fsl_writel(irq_src, &dr_regs->usbsts);
+ 
++	/* only handle enabled interrupt */
++	if (irq_src == 0x0)
++		goto irq_end;
++
+ 	VDBG("0x%x\n", irq_src);
+ 
+ 	/* Need to resume? */
+-- 
+1.8.0
+

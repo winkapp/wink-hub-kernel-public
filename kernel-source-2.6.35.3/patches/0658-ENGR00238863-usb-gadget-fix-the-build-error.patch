@@ -1,0 +1,35 @@
+From f8b4af9b22edb7b8ca1f59505381add1e9277364 Mon Sep 17 00:00:00 2001
+From: Peter Chen <peter.chen@freescale.com>
+Date: Fri, 4 Jan 2013 16:33:23 +0800
+Subject: [PATCH 658/670] ENGR00238863: usb: gadget: fix the build error
+
+Fix the below build error after cherry-pick lots of
+usb patches from origin/imx_2.6.35
+
+  LD      kernel/built-in.o
+  /home/b29397/work/projects/linux-2.6-imx/drivers/usb/gadget/arcotg_udc.c:
+  In function 'fsl_udc_resume':
+  /home/b29397/work/projects/linux-2.6-imx/drivers/usb/gadget/arcotg_udc.c:
+  3190: error: implicit declaration of function 'usb_debounce_id_vbus'
+
+Signed-off-by: Peter Chen <peter.chen@freescale.com>
+---
+ drivers/usb/gadget/arcotg_udc.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/usb/gadget/arcotg_udc.c b/drivers/usb/gadget/arcotg_udc.c
+index 34944c9..0515636 100644
+--- a/drivers/usb/gadget/arcotg_udc.c
++++ b/drivers/usb/gadget/arcotg_udc.c
+@@ -3187,7 +3187,7 @@ static int fsl_udc_resume(struct platform_device *pdev)
+ 		u32 temp;
+ 		if (udc_controller->stopped)
+ 			dr_clk_gate(true);
+-		usb_debounce_id_vbus();
++		usb_debounce_id_pin();
+ 		if (fsl_readl(&dr_regs->otgsc) & OTGSC_STS_USB_ID) {
+ 			temp = fsl_readl(&dr_regs->otgsc);
+ 			/* if b_session_irq_en is cleared by otg */
+-- 
+1.8.0
+

@@ -1,0 +1,43 @@
+From 74c959a71a09a17a6f11afb8fb1ff8670f908fab Mon Sep 17 00:00:00 2001
+From: Grace Si <b18730@freescale.com>
+Date: Wed, 16 Jan 2013 09:51:40 +0800
+Subject: [PATCH 664/670] ENGR00240077-2: [MX28] system can't wake up from
+ suspend with 5V only build
+
+When enter suspend mode, ILIMIT_EQ_ZERO should not set be set.
+
+Signed-off-by: Grace Si <b18730@freescale.com>
+---
+ arch/arm/mach-mx28/sleep.S | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/arch/arm/mach-mx28/sleep.S b/arch/arm/mach-mx28/sleep.S
+index 647def0..08039bf 100644
+--- a/arch/arm/mach-mx28/sleep.S
++++ b/arch/arm/mach-mx28/sleep.S
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2010-2012 Freescale Semiconductor, Inc.
++ * Copyright (C) 2010-2013 Freescale Semiconductor, Inc.
+  * Copyright 2008 Embedded Alley Solutions, Inc All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+@@ -294,7 +294,6 @@ __mx28_temp_stack:
+ 
+ 	PM_BITS_SET     HW_POWER_MINPWR_ADDR, BM_POWER_MINPWR_LESSANA_I
+ 
+-	PM_BITS_SET     HW_POWER_5VCTRL_ADDR, BM_POWER_5VCTRL_ILIMIT_EQ_ZERO
+ 	//Gated PLL0
+ 	PM_BITS_CLR	HW_CLKCTRL_PLL0CTRL0_ADDR, BM_CLKCTRL_PLL0CTRL0_POWER
+ 
+@@ -346,7 +345,6 @@ __mx28_temp_stack:
+ 
+ 	PM_BITS_CLR     HW_POWER_MINPWR_ADDR, BM_POWER_MINPWR_LESSANA_I
+ 
+-	PM_BITS_CLR     HW_POWER_5VCTRL_ADDR, BM_POWER_5VCTRL_ILIMIT_EQ_ZERO
+ 	// vddio
+ 	PM_SET_RESTORE_REG HW_POWER_VDDIOCTRL_ADDR, VDDIOCTRL_BACKUP
+ 77:
+-- 
+1.8.0
+

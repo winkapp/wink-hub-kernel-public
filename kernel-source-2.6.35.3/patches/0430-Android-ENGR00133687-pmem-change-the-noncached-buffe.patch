@@ -1,0 +1,45 @@
+From bfba5cbbf6f3b97cf2c4bb27634734bd241e629c Mon Sep 17 00:00:00 2001
+From: Xinyu Chen <xinyu.chen@freescale.com>
+Date: Tue, 2 Nov 2010 13:45:08 +0800
+Subject: [PATCH 430/670] Android ENGR00133687 pmem: change the noncached
+ buffer prot to writecombine.
+
+Workaround for imx5x M4IF burst len errata when armv7 neon enabled:
+if the burst len > 8bytes, access the strongly ordered memory,
+the result is not correct.
+Use pgprot_writecombine to map the memory to uncached and normal memory type,
+instead of pgprot_noncached which maps to strongly ordered memory,
+to avoid burst len > 8.
+
+Signed-off-by: Hu Hui <b29976@freescale.com>
+---
+ drivers/misc/pmem.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/misc/pmem.c b/drivers/misc/pmem.c
+index 9f323c5..b2b6186 100644
+--- a/drivers/misc/pmem.c
++++ b/drivers/misc/pmem.c
+@@ -1,6 +1,7 @@
+ /* drivers/android/pmem.c
+  *
+  * Copyright (C) 2007 Google, Inc.
++ * Copyright (C) 2010 Freescale Semiconductor, Inc.
+  *
+  * This software is licensed under the terms of the GNU General Public
+  * License version 2, as published by the Free Software Foundation, and
+@@ -441,9 +442,9 @@ static int pmem_allocate(int id, unsigned long len)
+ static pgprot_t phys_mem_access_prot(struct file *file, pgprot_t vma_prot)
+ {
+ 	int id = get_id(file);
+-#ifdef pgprot_noncached
++#ifdef pgprot_writecombine
+ 	if (pmem[id].cached == 0 || file->f_flags & O_SYNC)
+-		return pgprot_noncached(vma_prot);
++		return pgprot_writecombine(vma_prot);
+ #endif
+ #ifdef pgprot_ext_buffered
+ 	else if (pmem[id].buffered)
+-- 
+1.8.0
+

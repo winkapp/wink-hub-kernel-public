@@ -1,0 +1,28 @@
+From da042568d22bf801ec0f38887f4c1cd8792b66fc Mon Sep 17 00:00:00 2001
+From: Huang Shijie <b32955@freescale.com>
+Date: Tue, 11 Oct 2011 11:38:17 +0800
+Subject: [PATCH 595/670] ENGR38993445-4 AUART: fix compiling error
+
+change the field to fix the compiling error.
+
+Signed-off-by: Huang Shijie <b32955@freescale.com>
+---
+ drivers/serial/mxs-auart.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/serial/mxs-auart.c b/drivers/serial/mxs-auart.c
+index 313e300..f6e33fc 100644
+--- a/drivers/serial/mxs-auart.c
++++ b/drivers/serial/mxs-auart.c
+@@ -181,7 +181,7 @@ mxs_auart_rx_char(struct mxs_auart_port *s, unsigned int stat, u8 c)
+ static void dma_rx_do_tasklet(unsigned long arg)
+ {
+ 	struct mxs_auart_port *s = (struct mxs_auart_port *) arg;
+-	struct tty_struct *tty = s->port.info->port.tty;
++	struct tty_struct *tty = s->port.state->port.tty;
+ 	u32 stat = 0;
+ 	int count;
+ 	struct list_head *p, *q;
+-- 
+1.8.0
+

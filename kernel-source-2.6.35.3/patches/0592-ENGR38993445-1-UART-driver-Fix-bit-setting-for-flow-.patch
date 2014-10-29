@@ -1,0 +1,40 @@
+From 5aa0fffce8dd8d0511d4a7a404cc1bae50173eeb Mon Sep 17 00:00:00 2001
+From: Danny Nold <dannynold@freescale.com>
+Date: Tue, 14 Jun 2011 14:16:34 -0500
+Subject: [PATCH 592/670] ENGR38993445-1 UART driver: Fix bit setting for flow
+ control
+
+ Fix which bits are enabled in UART controller in order to
+ properly enable flow control. RTSEN bit is now set in addition to CTSEN bit.
+
+Signed-off-by: Danny Nold <dannynold@freescale.com>
+Signed-off-by: Huang Shijie <b32955@freescale.com>
+---
+ drivers/serial/mxs-auart.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/serial/mxs-auart.c b/drivers/serial/mxs-auart.c
+index be79f0e..d0edaca 100644
+--- a/drivers/serial/mxs-auart.c
++++ b/drivers/serial/mxs-auart.c
+@@ -3,7 +3,7 @@
+  *
+  * Author: dmitry pervushin <dimka@embeddedalley.com>
+  *
+- * Copyright 2008-2010 Freescale Semiconductor, Inc.
++ * Copyright 2008-2011 Freescale Semiconductor, Inc.
+  * Copyright 2008 Embedded Alley Solutions, Inc All Rights Reserved.
+  */
+ 
+@@ -528,7 +528,7 @@ static void mxs_auart_settermios(struct uart_port *u,
+ 
+ 	/* figure out the hardware flow control settings */
+ 	if (cflag & CRTSCTS)
+-		ctrl2 |= BM_UARTAPP_CTRL2_CTSEN /* | BM_UARTAPP_CTRL2_RTSEN */ ;
++		ctrl2 |= BM_UARTAPP_CTRL2_CTSEN | BM_UARTAPP_CTRL2_RTSEN;
+ 	else
+ 		ctrl2 &= ~BM_UARTAPP_CTRL2_CTSEN;
+ 
+-- 
+1.8.0
+

@@ -1,0 +1,740 @@
+From 7a9e2f54fbe3dd834ec38c6b0b654f8e35bd397d Mon Sep 17 00:00:00 2001
+From: Grace Si <b18730@freescale.com>
+Date: Tue, 18 Dec 2012 11:17:25 +0800
+Subject: [PATCH 638/670] ENGR00236853-2: [MX28] - add suspend-to-ram feature
+
+Add suspend-to-ram feature for MX28. In MX28 suspend-to-ram mode,
+MX28 chip is off, only PWSITCH can resume it.  When resume,
+it performs a cold boot, after bootlet runs,  it will  check the
+persistent to decide whether to jump the specified DRAM address to resume.
+Because it is cold boot, so all the registers values are lost and need be
+restored when resume. The drivers need restore the register values when
+resume from suspend-to-ram.
+
+Signed-off-by: Grace Si <b18730@freescale.com>
+---
+ arch/arm/mach-mx23/pm.c                 |   6 +-
+ arch/arm/mach-mx28/Kconfig              |   7 +
+ arch/arm/mach-mx28/clock.c              |  22 +--
+ arch/arm/mach-mx28/device.c             |  34 ++++-
+ arch/arm/mach-mx28/pm.c                 | 229 +++++++++++++++++++++++++++++++-
+ arch/arm/mach-mx28/sleep.S              |  40 +++---
+ arch/arm/mach-mx28/sleep.h              |   4 +-
+ arch/arm/plat-mxs/dma-apbh.c            |  38 +++++-
+ arch/arm/plat-mxs/dma-apbx.c            |  32 ++++-
+ arch/arm/plat-mxs/include/mach/device.h |   3 +-
+ 10 files changed, 366 insertions(+), 49 deletions(-)
+
+diff --git a/arch/arm/mach-mx23/pm.c b/arch/arm/mach-mx23/pm.c
+index 8512be1..b1a5220 100644
+--- a/arch/arm/mach-mx23/pm.c
++++ b/arch/arm/mach-mx23/pm.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2009-2010 Freescale Semiconductor, Inc.
++ * Copyright (C) 2009-2012 Freescale Semiconductor, Inc.
+  * Copyright 2008 Embedded Alley Solutions, Inc All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+@@ -513,11 +513,11 @@ static void mx23_pm_end(void)
+ 	/*XXX: Nothing to do */
+ }
+ 
+-suspend_state_t mx23_pm_get_target(void)
++suspend_state_t mxs_pm_get_target(void)
+ {
+ 	return saved_state;
+ }
+-EXPORT_SYMBOL(mx23_pm_get_target);
++EXPORT_SYMBOL(mxs_pm_get_target);
+ 
+ /**
+  * mx23_pm_get_sleep_state - get sleep state we waking from
+diff --git a/arch/arm/mach-mx28/Kconfig b/arch/arm/mach-mx28/Kconfig
+index dc1d8b1..8a4b067 100644
+--- a/arch/arm/mach-mx28/Kconfig
++++ b/arch/arm/mach-mx28/Kconfig
+@@ -23,3 +23,10 @@ config MEM_mDDR
+ 	depends on ARCH_MX28
+ 	help
+ 	  Say Y to select mDDR memory
++
++config MX28_SUSPEND_TO_RAM
++	bool "support MX28 suspend-to RAM feature"
++  default n
++	depends on ARCH_MX28
++	help
++	  Say Y to enable suspend-to-RAM
+diff --git a/arch/arm/mach-mx28/clock.c b/arch/arm/mach-mx28/clock.c
+index 8219c4e..6ed6b26 100644
+--- a/arch/arm/mach-mx28/clock.c
++++ b/arch/arm/mach-mx28/clock.c
+@@ -45,7 +45,6 @@
+ #define LCDIF_BASE_ADDR IO_ADDRESS(LCDIF_PHYS_ADDR)
+ 
+ void (*f) (struct mxs_emi_scaling_data *, unsigned int *, unsigned int);
+-static bool flag;
+ void *dvfs_iram_base;
+ unsigned int iram_paddr, iram_vaddr;
+ /* external clock input */
+@@ -890,14 +889,13 @@ static int emi_set_rate(struct clk *clk, unsigned long rate)
+ 	volatile unsigned int StateX, StateH;
+ 	volatile unsigned int APBHCTRL_Backup, APBXCTRL_Backup;
+ 	unsigned int i;
++	int ret = 0;
+ 
+-	if (!flag) {
+-		iram_vaddr = (unsigned long)iram_alloc(SZ_4K, &iram_paddr);
+-		iram_vaddr = __arm_ioremap(iram_paddr, SZ_4K, MT_UNCACHED);
+-		memcpy(iram_vaddr, mxs_ram_freq_scale, SZ_4K);
+-		f = (void *)iram_vaddr;
+-		flag = true;
+-	}
++	iram_vaddr = (unsigned long)iram_alloc(SZ_4K, &iram_paddr);
++	iram_vaddr = __arm_ioremap(iram_paddr, SZ_4K, MT_UNCACHED);
++	memcpy(iram_vaddr, mxs_ram_freq_scale, SZ_4K);
++
++	f = (void *)iram_vaddr;
+ 
+ #ifdef CONFIG_MEM_mDDR
+ 	if (rate <= 24000000) {
+@@ -990,10 +988,14 @@ static int emi_set_rate(struct clk *clk, unsigned long rate)
+ 			break;
+ 	if (!i) {
+ 		printk(KERN_ERR "couldn't set up EMI divisor\n");
+-		return -ETIMEDOUT;
++		ret = -ETIMEDOUT;
++		goto out;
+ 	}
+ 
+-	return 0;
++out:
++	iram_free(iram_paddr, SZ_4K);
++
++	return ret;
+ }
+ 
+ static struct clk emi_clk = {
+diff --git a/arch/arm/mach-mx28/device.c b/arch/arm/mach-mx28/device.c
+index a1f789e..c2e810c 100644
+--- a/arch/arm/mach-mx28/device.c
++++ b/arch/arm/mach-mx28/device.c
+@@ -1308,12 +1308,19 @@ static void __init mx28_init_dcp(void)
+ #endif
+ 
+ #if defined(CONFIG_SND_MXS_SOC_DAI) || defined(CONFIG_SND_MXS_SOC_DAI_MODULE)
+-static int audio_clk_init(struct clk *clk)
++static struct mxs_audio_platform_data audio_plat_data;
++
++static int audio_clk_init(void)
+ {
++	struct clk *clk;
+ 	struct clk *pll_clk;
+ 	struct clk *saif_mclk0;
+ 	struct clk *saif_mclk1;
+ 	int ret = -EINVAL;
++
++	if (audio_plat_data.inited)
++		return 0;
++	clk = clk_get(NULL, "saif.0");
+ 	if (IS_ERR(clk)) {
+ 		pr_err("%s:failed to get clk\n", __func__);
+ 		goto err_clk_init;
+@@ -1349,6 +1356,14 @@ static int audio_clk_init(struct clk *clk)
+ 	/*enable saif0/saif1 clk output*/
+ 	clk_enable(saif_mclk0);
+ 	clk_enable(saif_mclk1);
++
++  clk_put(clk);
++  clk_put(pll_clk);
++  clk_put(saif_mclk0);
++  clk_put(saif_mclk1);
++
++  audio_plat_data.inited = 1;
++
+ err_clk_init:
+ 	return ret;
+ }
+@@ -1359,6 +1374,9 @@ static int audio_clk_finit(void)
+ 	struct clk *saif_mclk0;
+ 	struct clk *saif_mclk1;
+ 	int ret = 0;
++
++	if (audio_plat_data.inited == 0)
++		return 0;
+ 	saif_clk = clk_get(NULL, "saif.0");
+ 	if (IS_ERR(saif_clk)) {
+ 		pr_err("%s:failed to get saif_clk\n", __func__);
+@@ -1366,6 +1384,7 @@ static int audio_clk_finit(void)
+ 		goto err_clk_finit;
+ 	}
+ 	clk_disable(saif_clk);
++  clk_put(saif_clk);
+ 
+ 	saif_mclk0 = clk_get(NULL, "saif_mclk.0");
+ 	if (IS_ERR(saif_mclk0)) {
+@@ -1373,6 +1392,7 @@ static int audio_clk_finit(void)
+ 		goto err_clk_finit;
+ 	}
+ 	clk_disable(saif_mclk0);
++  clk_put(saif_mclk0);
+ 
+ 	saif_mclk1 = clk_get(NULL, "saif_mclk.1");
+ 	if (IS_ERR(saif_mclk1)) {
+@@ -1380,11 +1400,14 @@ static int audio_clk_finit(void)
+ 		goto err_clk_finit;
+ 	}
+ 	clk_disable(saif_mclk1);
++  clk_put(saif_mclk1);
++
++  audio_plat_data.inited = 0;
++
+ err_clk_finit:
+ 	return ret;
+ }
+ 
+-static struct mxs_audio_platform_data audio_plat_data;
+ #endif
+ 
+ #if defined(CONFIG_SND_SOC_SGTL5000) || defined(CONFIG_SND_SOC_SGTL5000_MODULE)
+@@ -1394,10 +1417,15 @@ void __init mx28_init_audio(void)
+ 	if (pdev == NULL || IS_ERR(pdev))
+ 		return;
+ 	mxs_add_device(pdev, 3);
++	audio_plat_data.inited = 0;
+ 	audio_plat_data.saif_mclock = clk_get(NULL, "saif.0");
+-	audio_clk_init(audio_plat_data.saif_mclock);
++	audio_plat_data.init = audio_clk_init;
++	audio_plat_data.finit = audio_clk_finit;
++	audio_clk_init();
+ 	pdev->dev.platform_data = &audio_plat_data;
+ }
++
++
+ #else
+ void __init mx28_init_audio(void)
+ {
+diff --git a/arch/arm/mach-mx28/pm.c b/arch/arm/mach-mx28/pm.c
+index 0e022ae..3ce5798 100644
+--- a/arch/arm/mach-mx28/pm.c
++++ b/arch/arm/mach-mx28/pm.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2010-2011 Freescale Semiconductor, Inc.
++ * Copyright (C) 2010-2012 Freescale Semiconductor, Inc.
+  * Copyright 2008 Embedded Alley Solutions, Inc All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+@@ -44,13 +44,14 @@
+ #include "regs-dram.h"
+ #include "mx28_pins.h"
+ #include "mx28evk.h"
+-
++#include "regs-pinctrl.h"
+ #include "sleep.h"
+ 
+ #define PENDING_IRQ_RETRY 100
+ static void *saved_sram;
+ static int saved_sleep_state;
+ 
++#define HW_SAIF_CTRL    (0x00000000)
+ #define WAIT_DC_OK_CYCLES 24000
+ #define WAIT_CYCLE(n) for (i = 0; i < n; i++);
+ #define LOWER_VDDIO 10
+@@ -58,6 +59,7 @@ static int saved_sleep_state;
+ #define LOWER_VDDD 0xa
+ #define MAX_POWEROFF_CODE_SIZE (6 * 1024)
+ #define REGS_CLKCTRL_BASE IO_ADDRESS(CLKCTRL_PHYS_ADDR)
++#define REGS_ICOLL_BASE IO_ADDRESS(ICOLL_PHYS_ADDR)
+ #define dbgc(ch) __raw_writel(ch, IO_ADDRESS(0x80074000));
+ inline void dbgnum(u32 num)
+ {
+@@ -68,6 +70,13 @@ inline void dbgnum(u32 num)
+ 	dbgc('\n');
+ }
+ 
++
++int dma_apbh_suspend(void);
++int dma_apbh_resume(void);
++
++int dma_apbx_suspend(void);
++int dma_apbx_resume(void);
++
+ static inline void do_standby(void)
+ {
+ 	void (*mx28_cpu_standby_ptr) (void);
+@@ -162,9 +171,206 @@ static inline void do_standby(void)
+ 	mx28evk_enet_io_lowerpower_exit();
+ }
+ 
++static u32 clk_regs[] = {
++		HW_CLKCTRL_PLL0CTRL0,
++		HW_CLKCTRL_PLL1CTRL0,
++		HW_CLKCTRL_PLL2CTRL0,
++		HW_CLKCTRL_XTAL,
++		HW_CLKCTRL_DIS_LCDIF,
++		HW_CLKCTRL_SSP0,
++		HW_CLKCTRL_SSP1,
++		HW_CLKCTRL_SSP2,
++		HW_CLKCTRL_SSP3,
++		HW_CLKCTRL_SPDIF,
++    HW_CLKCTRL_SAIF0,
++    HW_CLKCTRL_SAIF1,
++		HW_CLKCTRL_GPMI,
++		HW_CLKCTRL_ENET,
++		HW_CLKCTRL_FRAC0,
++		HW_CLKCTRL_FRAC1,
++		HW_CLKCTRL_CLKSEQ,
++};
++
++static u32 pinctrl_regs[] = {
++    HW_PINCTRL_MUXSEL0,
++    HW_PINCTRL_DRIVE0,
++    HW_PINCTRL_PULL0,
++    HW_PINCTRL_DOUT0,
++    HW_PINCTRL_DIN0,
++    HW_PINCTRL_DOE0,
++    HW_PINCTRL_PIN2IRQ0,
++    HW_PINCTRL_IRQEN0,
++    HW_PINCTRL_IRQLEVEL0,
++    HW_PINCTRL_IRQPOL0,
++    HW_PINCTRL_IRQSTAT0,
++};
++
++static u32 pinctrl_regs_cnt[] = {
++    14,
++    20,
++    7,
++    5,
++    5,
++    5,
++    5,
++    5,
++    5,
++    5,
++    5,
++};
++
++/*
++
++MX28 doesn’t have low power mode.  The suspend-to-RAM is a “fake”
++LP mode which the ARM core is off and DRAM is in self-refresh mode
++and power sourced by external circuit. After enter suspend-toRAM mode,
++only PWSITCH can resume it and it starts  a code boot. Because it is
++cold boot, all the registers values are lost and need be restored
++when resume.
++
++MX28 EVK should rework hardware to test this feature
++
++a) Remove R31.
++b) Connect an external 1.8V supply to the DDR2. This can be done by
++connecting the supply to the pad on R31 near the DDR2.
++
++Enable this feature :
++
++System Type ---> Freescale i.MXS implementations
++---> support MX28 suspend-to RAM feature
++*/
+ static noinline void do_mem(void)
+ {
+-	/* TODO */
++#ifdef CONFIG_MX28_SUSPEND_TO_RAM
++	unsigned long iram_phy_addr;
++	void *iram_virtual_addr;
++	void (*mx28_cpu_suspend_ptr) (u32);
++	struct sleep_data saved_context;
++	int i, j, loop;
++	struct clk *cpu_clk;
++	struct clk *osc_clk;
++	struct clk *pll_clk;
++	struct clk *hbus_clk;
++	int cpu_rate = 0;
++	int hbus_rate = 0;
++
++	saved_context.fingerprint = SLEEP_DATA_FINGERPRINT;
++
++	saved_context.old_c00 = __raw_readl(0xC0000000);
++	saved_context.old_c04 = __raw_readl(0xC0000004);
++	__raw_writel((u32)&saved_context, (void *)0xC0000000);
++
++	iram_virtual_addr = iram_alloc(MAX_POWEROFF_CODE_SIZE, &iram_phy_addr);
++	if (iram_virtual_addr == NULL) {
++		pr_info("can not get iram for suspend\n");
++		return;
++	}
++
++	local_irq_disable();
++	local_fiq_disable();
++
++  dma_apbh_suspend();
++  dma_apbx_suspend();
++
++	/* clocks */
++	for (i = 0; i < ARRAY_SIZE(clk_regs); i++)
++		saved_context.clks[i] =
++				__raw_readl(REGS_CLKCTRL_BASE + clk_regs[i]);
++
++	/* interrupt collector */
++
++	saved_context.icoll_ctrl =
++		__raw_readl(REGS_ICOLL_BASE + HW_ICOLL_CTRL);
++	for (i = 0; i < 128; i++)
++			saved_context.icoll.intr[i] =
++			__raw_readl(REGS_ICOLL_BASE + HW_ICOLL_INTERRUPTn(i));
++
++
++	/* save pinmux state */
++  loop = 0;
++	for (i = 0; i < ARRAY_SIZE(pinctrl_regs); i++) {
++		for (j = 0; j < pinctrl_regs_cnt[i]; j++)
++			saved_context.pinmux[loop++] =
++				__raw_readl(IO_ADDRESS(PINCTRL_PHYS_ADDR) + pinctrl_regs[i] + (j<<4));
++  }
++
++	cpu_clk = clk_get(NULL, "cpu");
++	osc_clk = clk_get(NULL, "ref_xtal");
++	pll_clk = clk_get(NULL, "pll.0");
++	hbus_clk = clk_get(NULL, "h");
++
++	cpu_rate = clk_get_rate(cpu_clk);
++	hbus_rate = clk_get_rate(hbus_clk);
++
++	/* set the PERSISTENT_SLEEP_BIT for bootloader */
++	__raw_writel(1 << 10,
++		IO_ADDRESS(RTC_PHYS_ADDR) + HW_RTC_PERSISTENT1_SET);
++
++	/*
++	 * make sure SRAM copy gets physically written into SDRAM.
++	 * SDRAM will be placed into self-refresh during power down
++	 */
++	flush_cache_all();
++
++	/*copy suspend function into SRAM */
++	memcpy(iram_virtual_addr, mx28_cpu_suspend,
++		MAX_POWEROFF_CODE_SIZE);
++
++  printk(KERN_NOTICE "suspend to RAM\r\n");
++
++	/* do suspend */
++	mx28_cpu_suspend_ptr = (void *)iram_virtual_addr;
++	mx28_cpu_suspend_ptr(0);
++
++	saved_sleep_state = 1;	/* waking from non-standby state */
++
++	/* clocks */
++	for (i = 0; i < ARRAY_SIZE(clk_regs); i++)
++		__raw_writel(saved_context.clks[i],
++				REGS_CLKCTRL_BASE +	clk_regs[i]);
++
++	/* interrupt collector */
++
++	__raw_writel(saved_context.icoll_ctrl, REGS_ICOLL_BASE + HW_ICOLL_CTRL);
++	for (i = 0; i < 128; i++)
++		__raw_writel(saved_context.icoll.intr[i],
++					REGS_ICOLL_BASE + HW_ICOLL_INTERRUPTn(i));
++
++	/* restore pinmux state */
++
++	loop = 0;
++	for (i = 0; i < ARRAY_SIZE(pinctrl_regs); i++) {
++		for (j = 0; j < pinctrl_regs_cnt[i]; j++)
++				__raw_writel(saved_context.pinmux[loop++],
++					IO_ADDRESS(PINCTRL_PHYS_ADDR) + pinctrl_regs[i] + (j<<4));
++  }
++
++	__raw_writel(saved_context.old_c00, 0xC0000000);
++	__raw_writel(saved_context.old_c04, 0xC0000004);
++
++
++	iram_free(iram_phy_addr, MAX_POWEROFF_CODE_SIZE);
++
++	clk_set_rate(cpu_clk, cpu_rate);
++	clk_set_rate(hbus_clk, hbus_rate);
++
++	clk_put(hbus_clk);
++	clk_put(pll_clk);
++	clk_put(osc_clk);
++	clk_put(cpu_clk);
++
++  dma_apbh_resume();
++  dma_apbx_resume();
++
++
++	local_fiq_enable();
++
++  __raw_writel(BM_POWER_CTRL_PSWITCH_IRQ, REGS_POWER_BASE + HW_POWER_CTRL_CLR);
++
++  printk(KERN_NOTICE "wake up \r\n");
++#else
++  printk(KERN_NOTICE "\r\nnot supported \r\n");
++#endif
+ }
+ 
+ static int mx28_pm_enter(suspend_state_t state)
+@@ -209,14 +415,25 @@ static void mx28_pm_recover(void)
+ 
+ static void mx28_pm_end(void)
+ {
+-	/*XXX: Nothing to do */
++	if (saved_state == PM_SUSPEND_MEM) {
++    /* irq need be enabled after device driver resume */
++	  __raw_writel(BM_POWER_CTRL_PSWITCH_IRQ,
++		  REGS_POWER_BASE + HW_POWER_CTRL_CLR);
++	  __raw_writel(BM_POWER_CTRL_POLARITY_PSWITCH |
++		  BM_POWER_CTRL_ENIRQ_PSWITCH,
++		  REGS_POWER_BASE + HW_POWER_CTRL_SET);
++	  __raw_writel(BM_POWER_CTRL_PSWITCH_IRQ,
++		  REGS_POWER_BASE + HW_POWER_CTRL_CLR);
++
++    local_irq_enable();
++  }
+ }
+ 
+-suspend_state_t mx28_pm_get_target(void)
++suspend_state_t mxs_pm_get_target(void)
+ {
+ 	return saved_state;
+ }
+-EXPORT_SYMBOL(mx28_pm_get_target);
++EXPORT_SYMBOL(mxs_pm_get_target);
+ 
+ /**
+  * mx28_pm_get_sleep_state - get sleep state we waking from
+diff --git a/arch/arm/mach-mx28/sleep.S b/arch/arm/mach-mx28/sleep.S
+index 61df79c..647def0 100644
+--- a/arch/arm/mach-mx28/sleep.S
++++ b/arch/arm/mach-mx28/sleep.S
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2010-2011 Freescale Semiconductor, Inc.
++ * Copyright (C) 2010-2012 Freescale Semiconductor, Inc.
+  * Copyright 2008 Embedded Alley Solutions, Inc All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+@@ -42,6 +42,8 @@
+ #define HW_POWER_RESET_ADDR \
+ 	(MX28_SOC_IO_ADDRESS(POWER_PHYS_ADDR) + HW_POWER_RESET)
+ 
++#define HW_DRAM_CTL08_ADDR \
++	(MX28_SOC_IO_ADDRESS(DRAM_PHYS_ADDR) + HW_DRAM_CTL08)
+ #define HW_DRAM_CTL17_ADDR \
+ 	(MX28_SOC_IO_ADDRESS(DRAM_PHYS_ADDR) + HW_DRAM_CTL17)
+ #define HW_DRAM_CTL22_ADDR \
+@@ -533,24 +535,31 @@ ENTRY(mx28_cpu_suspend)
+ 	orr	r1, r1, #(1<<8)
+ 	str	r1, [r2]
+ 
+-	@ enable RTC/RAM clocks
++	@ enable RTC clocks
+ 	mov	r0, #(HW_RTC_PERSISTENT0_ADDR & 0x000000FF)
+ 	orr	r0, r0, #(HW_RTC_PERSISTENT0_ADDR & 0x0000FF00)
+ 	orr	r0, r0, #(HW_RTC_PERSISTENT0_ADDR & 0x00FF0000)
+ 	orr	r0, r0, #(HW_RTC_PERSISTENT0_ADDR & 0xFF000000)
+-	mov	r1, #((1<<4)|(1<<5)|1)
++	mov	r1, #((1<<5)|1)
+ 	str	r1, [r0, #4]
+ 
+ 	@ put DRAM into self refresh
+-	mov	r0, #(HW_DRAM_CTL17_ADDR & 0x000000FF)
+-	orr	r0, r0, #(HW_DRAM_CTL17_ADDR & 0x0000FF00)
+-	orr	r0, r0, #(HW_DRAM_CTL17_ADDR & 0x00FF0000)
+-	orr	r0, r0, #(HW_DRAM_CTL17_ADDR & 0xFF000000)
+-	ldr	r1, [r0]
+-	orr	r1, r1, #(BM_DRAM_CTL17_SREFRESH)
++	mov	r0, #(HW_DRAM_CTL22_ADDR & 0x000000FF)
++	orr	r0, r0, #(HW_DRAM_CTL22_ADDR & 0x0000FF00)
++	orr	r0, r0, #(HW_DRAM_CTL22_ADDR & 0x00FF0000)
++	orr	r0, r0, #(HW_DRAM_CTL22_ADDR & 0xFF000000)
++	ldr     r1,[r0]
++	and	r1, r1, #(~BM_DRAM_CTL22_LOWPOWER_CONTROL)
++        orr	r1, r1, #(BF_DRAM_CTL22_LOWPOWER_CONTROL(2))
+ 	str	r1, [r0]
+ 
+ 	@ wait for it to actually happen
++	mov	r0, #24 << 12
++61:	sub	r0, r0, #1
++	cmp	r0, #0
++	bne	61b
++
++
+ 	nop
+ 	nop
+ 	nop
+@@ -558,19 +567,6 @@ ENTRY(mx28_cpu_suspend)
+ 	nop
+ 	nop
+ 
+-	@ power off RAM
+-	mov	r0, #(HW_DRAM_CTL17_ADDR & 0x000000FF)
+-	orr	r0, r0, #(HW_DRAM_CTL17_ADDR & 0x0000FF00)
+-	orr	r0, r0, #(HW_DRAM_CTL17_ADDR & 0x00FF0000)
+-	orr	r0, r0, #(HW_DRAM_CTL17_ADDR & 0xFF000000)
+-	ldr	r1, [r0]
+-	orr	r1, r1, #(1<<24)
+-	str	r1, [r0]
+-	nop
+-	nop
+-	nop
+-	nop
+-
+ 	@ do enter sleep
+ 	mov	r0, #(HW_POWER_RESET_ADDR & 0x000000FF)
+ 	orr	r0, r0, #(HW_POWER_RESET_ADDR & 0x0000FF00)
+diff --git a/arch/arm/mach-mx28/sleep.h b/arch/arm/mach-mx28/sleep.h
+index 678d552..885232b 100644
+--- a/arch/arm/mach-mx28/sleep.h
++++ b/arch/arm/mach-mx28/sleep.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2010 Freescale Semiconductor, Inc.
++ * Copyright (C) 2012 Freescale Semiconductor, Inc.
+  * Copyright 2008 Embedded Alley Solutions, Inc All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+@@ -107,7 +107,7 @@ struct sleep_data {
+ 		u32		prio[0x10];
+ 		u32		intr[0x80];
+ 	} icoll;
+-	u32		clks[16];
++	u32		clks[20];
+ 	u32		old_c00;
+ 	u32		old_c04;
+ };
+diff --git a/arch/arm/plat-mxs/dma-apbh.c b/arch/arm/plat-mxs/dma-apbh.c
+index e7fb960..1f19161 100644
+--- a/arch/arm/plat-mxs/dma-apbh.c
++++ b/arch/arm/plat-mxs/dma-apbh.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2009-2010 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2009-2012 Freescale Semiconductor, Inc. All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -228,6 +228,42 @@ static int __devexit dma_apbh_remove(struct platform_device *pdev)
+ 	return 0;
+ }
+ 
++int dma_apbh_suspend(void)
++{
++	__raw_writel(BM_APBH_CTRL0_CLKGATE, IO_ADDRESS(APBH_DMA_PHYS_ADDR)
++			+ HW_APBH_CTRL0_SET);
++
++  return 0;
++
++}
++EXPORT_SYMBOL(dma_apbh_suspend);
++
++int dma_apbh_resume(void)
++{
++	int i;
++
++	__raw_writel(BM_APBH_CTRL0_SFTRST,
++			IO_ADDRESS(APBH_DMA_PHYS_ADDR) + HW_APBH_CTRL0_CLR);
++	for (i = 0; i < 10000; i++) {
++		if (!(__raw_readl(IO_ADDRESS(APBH_DMA_PHYS_ADDR) + HW_APBH_CTRL0_CLR) &
++		      BM_APBH_CTRL0_SFTRST))
++			break;
++		udelay(2);
++	}
++	if (i >= 10000)
++		return -ETIME;
++
++	__raw_writel(BM_APBH_CTRL0_CLKGATE, IO_ADDRESS(APBH_DMA_PHYS_ADDR) + HW_APBH_CTRL0_CLR);
++
++
++	__raw_writel(BM_APBH_CTRL0_AHB_BURST8_EN, IO_ADDRESS(APBH_DMA_PHYS_ADDR) + HW_APBH_CTRL0_CLR);
++	__raw_writel(BM_APBH_CTRL0_APB_BURST_EN,	IO_ADDRESS(APBH_DMA_PHYS_ADDR) + HW_APBH_CTRL0_CLR);
++
++  return 0;
++}
++EXPORT_SYMBOL(dma_apbh_resume);
++
++
+ static struct platform_driver dma_apbh_driver = {
+ 	.probe = dma_apbh_probe,
+ 	.remove = __devexit_p(dma_apbh_remove),
+diff --git a/arch/arm/plat-mxs/dma-apbx.c b/arch/arm/plat-mxs/dma-apbx.c
+index 6d77a69..bfb2be3 100644
+--- a/arch/arm/plat-mxs/dma-apbx.c
++++ b/arch/arm/plat-mxs/dma-apbx.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2009-2010 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2009-2012 Freescale Semiconductor, Inc. All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -38,6 +38,7 @@ static int mxs_dma_apbx_enable(struct mxs_dma_chan *pchan, unsigned int chan)
+ 	struct mxs_dma_device *pdev = pchan->dma;
+ 	struct mxs_dma_desc *pdesc;
+ 
++
+ 	pdesc = list_first_entry(&pchan->active, struct mxs_dma_desc, node);
+ 	if (pdesc == NULL)
+ 		return -EFAULT;
+@@ -66,6 +67,8 @@ static int mxs_dma_apbx_enable(struct mxs_dma_chan *pchan, unsigned int chan)
+ 	__raw_writel(mxs_dma_cmd_address(pdesc),
+ 		     pdev->base + HW_APBX_CHn_NXTCMDAR(chan));
+ 	__raw_writel(pchan->active_num, pdev->base + HW_APBX_CHn_SEMA(chan));
++
++
+ 	return 0;
+ }
+ 
+@@ -190,6 +193,33 @@ static int __devexit dma_apbx_remove(struct platform_device *pdev)
+ 	return 0;
+ }
+ 
++int dma_apbx_suspend(void)
++{
++	__raw_writel(BM_APBX_CTRL0_CLKGATE, IO_ADDRESS(APBX_DMA_PHYS_ADDR) + HW_APBX_CTRL0_SET);
++
++  return 0;
++}
++EXPORT_SYMBOL(dma_apbx_suspend);
++
++int dma_apbx_resume(void)
++{
++	int i;
++
++	__raw_writel(BM_APBX_CTRL0_SFTRST, IO_ADDRESS(APBX_DMA_PHYS_ADDR) + HW_APBX_CTRL0_CLR);
++	for (i = 0; i < 10000; i++) {
++		if (!(__raw_readl(IO_ADDRESS(APBX_DMA_PHYS_ADDR) + HW_APBX_CTRL0_CLR) & BM_APBX_CTRL0_SFTRST))
++			break;
++		udelay(2);
++	}
++	if (i >= 10000)
++		return -ETIME;
++	__raw_writel(BM_APBX_CTRL0_CLKGATE, IO_ADDRESS(APBX_DMA_PHYS_ADDR) + HW_APBX_CTRL0_CLR);
++
++  return 0;
++}
++EXPORT_SYMBOL(dma_apbx_resume);
++
++
+ static struct platform_driver dma_apbx_driver = {
+ 	.probe = dma_apbx_probe,
+ 	.remove = __devexit_p(dma_apbx_remove),
+diff --git a/arch/arm/plat-mxs/include/mach/device.h b/arch/arm/plat-mxs/include/mach/device.h
+index 86b614b..3ad3e02 100644
+--- a/arch/arm/plat-mxs/include/mach/device.h
++++ b/arch/arm/plat-mxs/include/mach/device.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2009-2011 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2009-2012 Freescale Semiconductor, Inc. All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -147,6 +147,7 @@ struct mxs_audio_platform_data {
+ 	int (*amp_enable) (int enable);
+ 	int (*finit) (void);	/* board specific finit */
+ 	void *priv;		/* used by board specific functions */
++  int inited;
+ };
+ 
+ struct mxs_persistent_bit_config {
+-- 
+1.8.0
+

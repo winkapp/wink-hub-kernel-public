@@ -1,0 +1,66 @@
+From 11b4f395b7fa1eafd155bdcbfdc0973fb3874efa Mon Sep 17 00:00:00 2001
+From: Grace Si <b18730@freescale.com>
+Date: Tue, 13 Nov 2012 17:17:35 +0800
+Subject: [PATCH 630/670] ENGR00233391-2: [MX28] add new API to measure
+ battery temperature
+
+Add new API to measure battery temperature through LRADC
+
+Signed-off-by: Grace Si <b18730@freescale.com>
+---
+ arch/arm/mach-mx28/device.c             | 8 ++++++--
+ arch/arm/plat-mxs/include/mach/ddi_bc.h | 8 +++++++-
+ 2 files changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm/mach-mx28/device.c b/arch/arm/mach-mx28/device.c
+index d2510f3..a1f789e 100644
+--- a/arch/arm/mach-mx28/device.c
++++ b/arch/arm/mach-mx28/device.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2009-2011 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2009-2012 Freescale Semiconductor, Inc. All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -1204,8 +1204,12 @@ static ddi_bc_Cfg_t battery_data = {
+ 	.u8DieTempHigh			 = 75,		/* deg centigrade */
+ 	.u8DieTempLow			 = 65,		/* deg centigrade */
+ 	.u16DieTempSafeCurrent		 = 0,		/* mA */
++	.u8DieTempChannel		 = 0,		/* LRADC 0 */
+ 	.monitorBatteryTemp		 = 0,		/* Monitor the battery*/
+-	.u8BatteryTempChannel		 = 0,		/* LRADC 0 */
++  /* There is no free LRADC channel for battery monitor.
++     LRADC 1  is also used for kbd, if LRADC_CH1 is used
++     for battery temperature. kbd device should be disabled */
++  .u8BatteryTempChannel = LRADC_CH1,
+ 	.u16BatteryTempHigh		 = 642,		/* Unknown units */
+ 	.u16BatteryTempLow		 = 497,		/* Unknown units */
+ 	.u16BatteryTempSafeCurrent	 = 0,		/* mA */
+diff --git a/arch/arm/plat-mxs/include/mach/ddi_bc.h b/arch/arm/plat-mxs/include/mach/ddi_bc.h
+index 21ca921..26d516e 100644
+--- a/arch/arm/plat-mxs/include/mach/ddi_bc.h
++++ b/arch/arm/plat-mxs/include/mach/ddi_bc.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2010 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2012 Freescale Semiconductor, Inc. All Rights Reserved.
+  */
+ 
+ /*
+@@ -297,6 +297,12 @@ typedef struct _ddi_bc_Cfg {
+ 
+ 	uint16_t u16DieTempSafeCurrent;
+ 
++	/* brief This field indicates the LRADC channel to
++     read Die temperature */
++
++	uint8_t u8DieTempChannel;
++
++
+ 	/* brief If the battery charger is monitoring the battery */
+ 	/*  temperature, this field indicates the LRADC channel to */
+ 	/*  read. */
+-- 
+1.8.0
+

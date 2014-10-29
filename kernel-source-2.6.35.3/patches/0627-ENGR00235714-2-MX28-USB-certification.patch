@@ -1,0 +1,73 @@
+From a50f867a7c3b3251b29e184e7e7dd3d36e5c777c Mon Sep 17 00:00:00 2001
+From: Peter Chan <B18700@freescale.com>
+Date: Wed, 5 Dec 2012 17:40:27 +0800
+Subject: [PATCH 627/670] ENGR00235714-2 - MX28 USB certification
+
+The patch include:
+- USB test mode on hub port and Root-hub port
+- support 3 types of message:
+    too much hub ties for hub attachment
+    too much power consumption for device attachment
+    unsupported device class warning
+- support menuconfig select the FSL_USB_TEST_MODE ,located in:
+    -> Device Drivers
+        -> USB support (USB_SUPPORT [=y])
+            -> FSL High-speed Electrical Test Mode Support
+- remove OTG compliant setting
+- power VDDA from LinearReg to reduce USB jitters
+- change default HW_USBPHY_TX & HW_USBPHY_RX values for MX28
+- For USB CV 3.0 test, the gap between the ACK of set_address and
+  the subsequent setup packet may be very little, say 500us, and
+  if the latency we handle the ep completion is greater than this
+  gap, there is no response to the subsequent packet. It will
+  cause CV test fail
+  There is another way to set the address, it should set the bit 24
+  to 1 with the right address, and then IC controller will set the
+  address when the IN req complete instead of SW do it. It is more
+  fast so it can fix the CV 3.0 test fail issue
+
+Signed-off-by: Peter Chan <B18700@freescale.com>
+---
+ drivers/power/mxs/ddi_power_battery.c | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/power/mxs/ddi_power_battery.c b/drivers/power/mxs/ddi_power_battery.c
+index 762f29b..d0ef918 100644
+--- a/drivers/power/mxs/ddi_power_battery.c
++++ b/drivers/power/mxs/ddi_power_battery.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2010 Freescale Semiconductor, Inc.
++ * Copyright (C) 2012 Freescale Semiconductor, Inc.
+  */
+ 
+ /*
+@@ -878,6 +878,7 @@ int ddi_power_init_battery(void)
+ {
+ 
+ 	int ret = 0;
++	uint32_t reg;
+ 
+ 	if (!(__raw_readl(REGS_POWER_BASE + HW_POWER_5VCTRL) &&
+ 			BM_POWER_5VCTRL_ENABLE_DCDC)) {
+@@ -963,6 +964,17 @@ int ddi_power_init_battery(void)
+ #endif
+ 	}
+ 
++#ifdef CONFIG_ARCH_MX28
++	/* Always power VDDA from LinearReg to reduce USB jitters */
++	reg = __raw_readl(REGS_POWER_BASE + HW_POWER_VDDACTRL);
++	reg |= BM_POWER_VDDACTRL_ENABLE_LINREG;
++	__raw_writel(reg, REGS_POWER_BASE + HW_POWER_VDDACTRL);
++	mdelay(100);
++	reg = __raw_readl(REGS_POWER_BASE + HW_POWER_VDDACTRL);
++	reg |= BM_POWER_VDDACTRL_DISABLE_FET;
++	 __raw_writel(reg, REGS_POWER_BASE + HW_POWER_VDDACTRL);
++#endif
++
+ #ifndef VDD4P2_ENABLED
+ 	/* prepare handoff */
+ 	ddi_power_init_handoff();
+-- 
+1.8.0
+

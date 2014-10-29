@@ -1,0 +1,172 @@
+From 105ae4a60623e67a775ee1c2cc4af30ef7b60f6b Mon Sep 17 00:00:00 2001
+From: Peter Chen <peter.chen@freescale.com>
+Date: Mon, 22 Aug 2011 13:05:26 +0800
+Subject: [PATCH 590/670] ENGR00155144-1 mx28-usb: bugs found at customer
+ project
+
+MSL part
+
+- It should use safe access method to write usb controller register
+- The phy's clock should be off/on during suspend/resume
+
+Signed-off-by: Peter Chen <peter.chen@freescale.com>
+---
+ arch/arm/mach-mx28/usb_dr.c    | 14 ++++++++++----
+ arch/arm/mach-mx28/usb_h1.c    | 14 +++++++++++---
+ arch/arm/plat-mxs/usb_common.c | 14 ++++++++++----
+ 3 files changed, 31 insertions(+), 11 deletions(-)
+
+diff --git a/arch/arm/mach-mx28/usb_dr.c b/arch/arm/mach-mx28/usb_dr.c
+index 05eb706..e95b786 100644
+--- a/arch/arm/mach-mx28/usb_dr.c
++++ b/arch/arm/mach-mx28/usb_dr.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2009-2010 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2009-2011 Freescale Semiconductor, Inc. All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -31,6 +31,12 @@
+ #include "mx28_pins.h"
+ #define USB_POWER_ENABLE MXS_PIN_TO_GPIO(PINID_AUART2_TX)
+ 
++#ifdef CONFIG_WORKAROUND_ARCUSB_REG_RW
++static void fsl_safe_writel(u32 val32, volatile u32 *addr)
++{
++	__asm__ ("swp %0, %0, [%1]" : : "r"(val32), "r"(addr));
++}
++#endif
+ extern int clk_get_usecount(struct clk *clk);
+ static struct clk *usb_clk;
+ static struct clk *usb_phy_clk;
+@@ -142,7 +148,7 @@ static void enter_phy_lowpower_suspend(struct fsl_usb2_platform_data *pdata, boo
+ 	if (enable) {
+ 		tmp = __raw_readl(usb_reg + UOG_PORTSC1);
+ 		tmp |= PORTSC_PHCD;
+-		__raw_writel(tmp, usb_reg + UOG_PORTSC1);
++		fsl_safe_writel(tmp, usb_reg + UOG_PORTSC1);
+ 
+ 		pr_debug("%s, Poweroff UTMI \n", __func__);
+ 
+@@ -170,7 +176,7 @@ static void enter_phy_lowpower_suspend(struct fsl_usb2_platform_data *pdata, boo
+ 
+ 		tmp = __raw_readl(usb_reg + UOG_PORTSC1);
+ 		tmp &= ~PORTSC_PHCD;
+-		__raw_writel(tmp, usb_reg + UOG_PORTSC1);
++		fsl_safe_writel(tmp, usb_reg + UOG_PORTSC1);
+ 	}
+ }
+ 
+@@ -307,7 +313,7 @@ static bool _is_host_wakeup(struct fsl_usb2_platform_data *pdata)
+ 		pr_debug("otg host ID wakeup\n");
+ 		/* if host ID wakeup, we must clear the b session change sts */
+ 		__raw_writel(wakeup_irq_bits, phy_reg + HW_USBPHY_CTRL_CLR);
+-		__raw_writel(otgsc & (~OTGSC_IS_USB_ID), usb_reg + UOG_OTGSC);
++		fsl_safe_writel(otgsc & (~OTGSC_IS_USB_ID), usb_reg + UOG_OTGSC);
+ 		return true;
+ 	}
+ 	if (wakeup_req /*&& (!((otgsc & OTGSC_IS_B_SESSION_VALID)))*/ && (!((otgsc & OTGSC_STS_USB_ID)))) {
+diff --git a/arch/arm/mach-mx28/usb_h1.c b/arch/arm/mach-mx28/usb_h1.c
+index f4d5ba4..579ce9a 100644
+--- a/arch/arm/mach-mx28/usb_h1.c
++++ b/arch/arm/mach-mx28/usb_h1.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2009-2010 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2009-2011 Freescale Semiconductor, Inc. All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -39,6 +39,12 @@ static void usb_host_phy_resume(struct fsl_usb2_platform_data *plat)
+ }
+ 
+ static int internal_phy_clk_already_on;
++#ifdef CONFIG_WORKAROUND_ARCUSB_REG_RW
++static void fsl_safe_writel(u32 val32, volatile u32 *addr)
++{
++	__asm__ ("swp %0, %0, [%1]" : : "r"(val32), "r"(addr));
++}
++#endif
+ static void usbh1_internal_phy_clock_gate(bool on)
+ {
+ 	u32 tmp;
+@@ -89,7 +95,9 @@ static void usbh1_clock_gate(bool on)
+ 	if (on) {
+ 		clk_enable(usb_clk);
+ 		clk_enable(usb_phy_clk);
++		usbh1_internal_phy_clock_gate(on);
+ 	} else {
++		usbh1_internal_phy_clock_gate(on);
+ 		clk_disable(usb_phy_clk);
+ 		clk_disable(usb_clk);
+ 	}
+@@ -134,7 +142,7 @@ static void _phy_lowpower_suspend(struct fsl_usb2_platform_data *pdata, bool ena
+ 	if (enable) {
+ 		tmp = __raw_readl(usb_reg + UOG_PORTSC1);
+ 		tmp |= PORTSC_PHCD;
+-		__raw_writel(tmp, usb_reg + UOG_PORTSC1);
++		fsl_safe_writel(tmp, usb_reg + UOG_PORTSC1);
+ 
+ 		pr_debug("%s, Poweroff UTMI \n", __func__);
+ 
+@@ -162,7 +170,7 @@ static void _phy_lowpower_suspend(struct fsl_usb2_platform_data *pdata, bool ena
+ 
+ 		tmp = __raw_readl(usb_reg + UOG_PORTSC1);
+ 		tmp &= ~PORTSC_PHCD;
+-		__raw_writel(tmp, usb_reg + UOG_PORTSC1);
++		fsl_safe_writel(tmp, usb_reg + UOG_PORTSC1);
+ 	}
+ }
+ 
+diff --git a/arch/arm/plat-mxs/usb_common.c b/arch/arm/plat-mxs/usb_common.c
+index a3b18be..700d168 100644
+--- a/arch/arm/plat-mxs/usb_common.c
++++ b/arch/arm/plat-mxs/usb_common.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2009-2010 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2009-2011 Freescale Semiconductor, Inc. All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -48,6 +48,12 @@
+ #include <linux/io.h>
+ #define MXC_NUMBER_USB_TRANSCEIVER 6
+ struct fsl_xcvr_ops *g_xc_ops[MXC_NUMBER_USB_TRANSCEIVER] = { NULL };
++#ifdef CONFIG_WORKAROUND_ARCUSB_REG_RW
++static void fsl_safe_writel(u32 val32, volatile u32 *addr)
++{
++	__asm__ ("swp %0, %0, [%1]" : : "r"(val32), "r"(addr));
++}
++#endif
+ 
+ void fsl_usb_xcvr_register(struct fsl_xcvr_ops *xcvr_ops)
+ {
+@@ -228,12 +234,12 @@ int usb_phy_enable(struct fsl_usb2_platform_data *pdata)
+ 	usbcmd = usb_reg + UOG_USBCMD;
+ 	tmp = __raw_readl(usbcmd); /* usb command */
+ 	tmp &= ~UCMD_RUN_STOP;
+-	__raw_writel(tmp, usbcmd);
++	fsl_safe_writel(tmp, usbcmd);
+ 	while (__raw_readl(usbcmd) & UCMD_RUN_STOP)
+ 		;
+ 
+ 	tmp |= UCMD_RESET;
+-	__raw_writel(tmp, usbcmd);
++	fsl_safe_writel(tmp, usbcmd);
+ 	while (__raw_readl(usbcmd) & UCMD_RESET)
+ 		;
+ 	mdelay(10);
+@@ -263,7 +269,7 @@ int usb_phy_enable(struct fsl_usb2_platform_data *pdata)
+ 	tmp = __raw_readl(portsc);
+ 	tmp &=  ~PORTSC_PTS_MASK;
+ 	tmp |= (PORTSC_PTS_UTMI | PORTSC_PTW);
+-	__raw_writel(tmp, portsc);
++	fsl_safe_writel(tmp, portsc);
+ 
+ 	/* Power up the PHY */
+ 	__raw_writel(0, phy_reg + HW_USBPHY_PWD);
+-- 
+1.8.0
+

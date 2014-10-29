@@ -1,0 +1,60 @@
+From 38bf41cc376e24c384934fbeb10770d6712e9143 Mon Sep 17 00:00:00 2001
+From: Michal Marek <mmarek@suse.cz>
+Date: Fri, 29 Apr 2011 14:45:31 +0200
+Subject: [PATCH 617/670] kbuild: Allow to combine multiple W= levels
+
+Add support for make W=12, make W=123 and so on, to enable warnings from
+multiple W= levels. Normally, make W=<level> does not include warnings
+from the previous level.
+
+Signed-off-by: Michal Marek <mmarek@suse.cz>
+Acked-by: Sam Ravnborg <sam@ravnborg.org>
+Reviewed-By: Valdis Kletnieks <valdis.kletnieks@vt.edu>
+---
+ Makefile               | 2 +-
+ scripts/Makefile.build | 8 ++++++--
+ 2 files changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 6a22da1..89ce0d1 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1248,7 +1248,7 @@ help:
+ 	@echo  '		1: warnings which may be relevant and do not occur too often'
+ 	@echo  '		2: warnings which occur quite often but may still be relevant'
+ 	@echo  '		3: more obscure warnings, can most likely be ignored'
+-
++	@echo  '		Multiple levels can be combined with W=12 or W=123'
+ 	@echo  ''
+ 	@echo  'Execute "make" or "make all" to build all targets marked with [*] '
+ 	@echo  'For further info see the ./README file'
+diff --git a/scripts/Makefile.build b/scripts/Makefile.build
+index 1c477fe..baceecd 100644
+--- a/scripts/Makefile.build
++++ b/scripts/Makefile.build
+@@ -60,6 +60,8 @@ endif
+ # $(call cc-option, -W...) handles gcc -W.. options which
+ # are not supported by all versions of the compiler
+ ifdef KBUILD_ENABLE_EXTRA_GCC_CHECKS
++warning-  := $(empty)
++
+ warning-1 := -Wextra -Wunused -Wno-unused-parameter
+ warning-1 += -Wmissing-declarations
+ warning-1 += -Wmissing-format-attribute
+@@ -86,9 +88,11 @@ warning-3 += -Wswitch-default
+ warning-3 += $(call cc-option, -Wpacked-bitfield-compat)
+ warning-3 += $(call cc-option, -Wvla)
+ 
+-warning := $(warning-$(KBUILD_ENABLE_EXTRA_GCC_CHECKS))
++warning := $(warning-$(findstring 1, $(KBUILD_ENABLE_EXTRA_GCC_CHECKS)))
++warning += $(warning-$(findstring 2, $(KBUILD_ENABLE_EXTRA_GCC_CHECKS)))
++warning += $(warning-$(findstring 3, $(KBUILD_ENABLE_EXTRA_GCC_CHECKS)))
+ 
+-ifeq ("$(warning)","")
++ifeq ("$(strip $(warning))","")
+         $(error W=$(KBUILD_ENABLE_EXTRA_GCC_CHECKS) is unknown)
+ endif
+ 
+-- 
+1.8.0
+

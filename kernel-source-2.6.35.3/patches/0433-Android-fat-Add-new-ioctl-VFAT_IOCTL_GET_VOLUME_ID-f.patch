@@ -1,0 +1,124 @@
+From 32c6b90e486b312f80bca1b72e582257b44e946e Mon Sep 17 00:00:00 2001
+From: Brian Swetland <swetland@google.com>
+Date: Mon, 25 Oct 2010 13:38:08 +0800
+Subject: [PATCH 433/670] Android fat: Add new ioctl VFAT_IOCTL_GET_VOLUME_ID
+ for reading the volume ID.
+
+The volume id is the serial number stored in the fat boot sector.
+
+Signed-off-by: Brian Swetland <swetland@google.com>
+---
+ fs/fat/dir.c             |  9 +++++++++
+ fs/fat/fat.h             |  1 +
+ fs/fat/inode.c           |  9 +++++++++
+ include/linux/msdos_fs.h | 12 ++++++++++++
+ 4 files changed, 31 insertions(+)
+
+diff --git a/fs/fat/dir.c b/fs/fat/dir.c
+index ee42b9e..2242ac2 100644
+--- a/fs/fat/dir.c
++++ b/fs/fat/dir.c
+@@ -753,6 +753,13 @@ static int fat_ioctl_readdir(struct inode *inode, struct file *filp,
+ 	return ret;
+ }
+ 
++static int fat_ioctl_volume_id(struct inode *dir)
++{
++	struct super_block *sb = dir->i_sb;
++	struct msdos_sb_info *sbi = MSDOS_SB(sb);
++	return sbi->vol_id;
++}
++
+ static long fat_dir_ioctl(struct file *filp, unsigned int cmd,
+ 			  unsigned long arg)
+ {
+@@ -769,6 +776,8 @@ static long fat_dir_ioctl(struct file *filp, unsigned int cmd,
+ 		short_only = 0;
+ 		both = 1;
+ 		break;
++	case VFAT_IOCTL_GET_VOLUME_ID:
++		return fat_ioctl_volume_id(inode);
+ 	default:
+ 		return fat_generic_ioctl(filp, cmd, arg);
+ 	}
+diff --git a/fs/fat/fat.h b/fs/fat/fat.h
+index 27ac257..a488c77 100644
+--- a/fs/fat/fat.h
++++ b/fs/fat/fat.h
+@@ -78,6 +78,7 @@ struct msdos_sb_info {
+ 	const void *dir_ops;		     /* Opaque; default directory operations */
+ 	int dir_per_block;	     /* dir entries per block */
+ 	int dir_per_block_bits;	     /* log2(dir_per_block) */
++	unsigned long vol_id;        /* volume ID */
+ 
+ 	int fatent_shift;
+ 	struct fatent_operations *fatent_ops;
+diff --git a/fs/fat/inode.c b/fs/fat/inode.c
+index 7bf45ae..1afa217 100644
+--- a/fs/fat/inode.c
++++ b/fs/fat/inode.c
+@@ -1249,6 +1249,7 @@ int fat_fill_super(struct super_block *sb, void *data, int silent,
+ 	struct inode *root_inode = NULL, *fat_inode = NULL;
+ 	struct buffer_head *bh;
+ 	struct fat_boot_sector *b;
++	struct fat_boot_bsx *bsx;
+ 	struct msdos_sb_info *sbi;
+ 	u16 logical_sector_size;
+ 	u32 total_sectors, total_clusters, fat_clusters, rootdir_sectors;
+@@ -1393,6 +1394,8 @@ int fat_fill_super(struct super_block *sb, void *data, int silent,
+ 			goto out_fail;
+ 		}
+ 
++		bsx = (struct fat_boot_bsx *)(bh->b_data + FAT32_BSX_OFFSET);
++
+ 		fsinfo = (struct fat_boot_fsinfo *)fsinfo_bh->b_data;
+ 		if (!IS_FSINFO(fsinfo)) {
+ 			printk(KERN_WARNING "FAT: Invalid FSINFO signature: "
+@@ -1408,8 +1411,14 @@ int fat_fill_super(struct super_block *sb, void *data, int silent,
+ 		}
+ 
+ 		brelse(fsinfo_bh);
++	} else {
++		bsx = (struct fat_boot_bsx *)(bh->b_data + FAT16_BSX_OFFSET);
+ 	}
+ 
++	/* interpret volume ID as a little endian 32 bit integer */
++	sbi->vol_id = (((u32)bsx->vol_id[0]) | ((u32)bsx->vol_id[1] << 8) |
++		((u32)bsx->vol_id[2] << 16) | ((u32)bsx->vol_id[3] << 24));
++
+ 	sbi->dir_per_block = sb->s_blocksize / sizeof(struct msdos_dir_entry);
+ 	sbi->dir_per_block_bits = ffs(sbi->dir_per_block) - 1;
+ 
+diff --git a/include/linux/msdos_fs.h b/include/linux/msdos_fs.h
+index 34066e6..f38d4f0 100644
+--- a/include/linux/msdos_fs.h
++++ b/include/linux/msdos_fs.h
+@@ -101,6 +101,7 @@ struct __fat_dirent {
+ /* <linux/videotext.h> has used 0x72 ('r') in collision, so skip a few */
+ #define FAT_IOCTL_GET_ATTRIBUTES	_IOR('r', 0x10, __u32)
+ #define FAT_IOCTL_SET_ATTRIBUTES	_IOW('r', 0x11, __u32)
++#define VFAT_IOCTL_GET_VOLUME_ID	_IOR('r', 0x12, __u32)
+ 
+ struct fat_boot_sector {
+ 	__u8	ignored[3];	/* Boot strap short or near jump */
+@@ -138,6 +139,17 @@ struct fat_boot_fsinfo {
+ 	__le32   reserved2[4];
+ };
+ 
++struct fat_boot_bsx {
++	__u8     drive;		    /* drive number */
++	__u8     reserved1;
++	__u8     signature;	    /* extended boot signature */
++	__u8     vol_id[4];     /* volume ID */
++	__u8     vol_label[11]; /* volume label */
++	__u8     type[8];       /* file system type */
++};
++#define FAT16_BSX_OFFSET	36 /* offset of fat_boot_bsx in FAT12 and FAT16 */
++#define FAT32_BSX_OFFSET	64 /* offset of fat_boot_bsx in FAT32 */
++
+ struct msdos_dir_entry {
+ 	__u8	name[MSDOS_NAME];/* name and extension */
+ 	__u8	attr;		/* attribute bits */
+-- 
+1.8.0
+

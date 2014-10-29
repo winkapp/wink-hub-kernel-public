@@ -1,0 +1,37 @@
+From 5f8a06d9c6a97e18e3786d4f7209ebcc36067e99 Mon Sep 17 00:00:00 2001
+From: Fugang Duan <B38611@freescale.com>
+Date: Mon, 14 May 2012 15:37:49 +0800
+Subject: [PATCH 600/670] ENGR00137130 Fec: MDIO timeout at plugin cable or
+ down/up ethn.
+
+- In IMX28, eth0 and eth1 shared MDIO, using MDIO interrupt
+  to check the phy status.
+  Enet cannot work when plugin the cable or down/up ethn,
+  and MDIO read/write timeout.
+- The root cause is enet is disable, and cannot generate
+  MDIO interrupt.
+- Enable enet to keep mii interrupt works when enet is not
+  used.
+
+Signed-off-by: Fugang Duan <B38611@freescale.com>
+---
+ drivers/net/fec.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/net/fec.c b/drivers/net/fec.c
+index 6f23954..6d1d69b 100644
+--- a/drivers/net/fec.c
++++ b/drivers/net/fec.c
+@@ -1416,6 +1416,9 @@ fec_stop(struct net_device *dev)
+ 	udelay(10);
+ 
+ #ifdef CONFIG_ARCH_MXS
++	/* FIXME: we have to enable enet to keep mii interrupt works. */
++	writel((0x1 << 1), fep->hwp + FEC_ECNTRL);
++
+ 	/* Check MII or RMII */
+ 	if (fep->phy_interface == PHY_INTERFACE_MODE_RMII)
+ 		writel(readl(fep->hwp + FEC_R_CNTRL) | 0x100,
+-- 
+1.8.0
+

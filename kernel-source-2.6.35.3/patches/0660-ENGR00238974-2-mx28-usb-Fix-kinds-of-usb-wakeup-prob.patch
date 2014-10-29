@@ -1,0 +1,229 @@
+From 437a2b7c888b9d1bb1a92cee136637b3e4857c29 Mon Sep 17 00:00:00 2001
+From: Peter Chen <peter.chen@freescale.com>
+Date: Tue, 8 Jan 2013 10:14:17 +0800
+Subject: [PATCH 660/670] ENGR00238974-2: mx28-usb: Fix kinds of usb wakeup
+ problems
+
+This is for driver part
+
+- Add correct suspend/resume procedures
+- Add solutions for IC limitations during usb suspend/resume
+- More USB wakeup functions are tested (only echo standby is tested)
+- Only build-in driver usb function are tested
+
+Signed-off-by: Peter Chen <peter.chen@freescale.com>
+---
+ drivers/usb/core/hub.c          | 29 +++++++++++++++++++++++++----
+ drivers/usb/gadget/arcotg_udc.c | 11 +++++------
+ drivers/usb/host/ehci-arc.c     | 11 ++++-------
+ drivers/usb/host/ehci-hub.c     | 23 +++++++++++++++++++++++
+ 4 files changed, 57 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/usb/core/hub.c b/drivers/usb/core/hub.c
+index 46a5ad5..16f9007 100644
+--- a/drivers/usb/core/hub.c
++++ b/drivers/usb/core/hub.c
+@@ -2379,6 +2379,16 @@ int usb_port_resume(struct usb_device *udev, pm_message_t msg)
+ 				(msg.event & PM_EVENT_AUTO ? "auto-" : ""));
+ 		msleep(25);
+ 
++#ifdef MXS_USB_HOST_HACK
++		if (hub->hdev->parent == NULL) {
++			struct usb_device *hdev = hub->hdev;
++			struct usb_hcd *hcd = bus_to_hcd(hdev->bus);
++			struct fsl_usb2_platform_data *pdata;
++			pdata = hcd->self.controller->platform_data;
++			if (pdata && pdata->platform_resume)
++				pdata->platform_resume(pdata);
++		}
++#endif
+ 		/* Virtual root hubs can trigger on GET_PORT_STATUS to
+ 		 * stop resume signaling.  Then finish the resume
+ 		 * sequence.
+@@ -2390,6 +2400,16 @@ int usb_port_resume(struct usb_device *udev, pm_message_t msg)
+ 	}
+ 
+  SuspendCleared:
++#ifdef MXS_USB_HOST_HACK
++	if (hub->hdev->parent == NULL) {
++		struct usb_device *hdev = hub->hdev;
++		struct usb_hcd *hcd = bus_to_hcd(hdev->bus);
++		struct fsl_usb2_platform_data *pdata;
++		pdata = hcd->self.controller->platform_data;
++		if (pdata && pdata->platform_resume)
++			pdata->platform_resume(pdata);
++	}
++#endif
+ 	if (status == 0) {
+ 		if (portchange & USB_PORT_STAT_C_SUSPEND)
+ 			clear_port_feature(hub->hdev, port1,
+@@ -2871,13 +2891,14 @@ hub_port_init (struct usb_hub *hub, struct usb_device *udev, int port1,
+ 
+ #ifdef MXS_USB_HOST_HACK
+ 	{	/*Must enable HOSTDISCONDETECT after second reset*/
+-		if (port1 == 1) {
++		if ((port1 == 1) && (udev->level == 1)) {
+ 			if (udev->speed == USB_SPEED_HIGH) {
+ 				struct device *dev = hcd->self.controller;
+ 				struct fsl_usb2_platform_data *pdata;
+ 				pdata = (struct fsl_usb2_platform_data *)
+ 					 dev->platform_data;
+-				fsl_platform_set_usb_phy_dis(pdata, 1);
++				if (pdata)
++					fsl_platform_set_usb_phy_dis(pdata, 1);
+ 			}
+ 		}
+ 	}
+@@ -3020,8 +3041,8 @@ static void hub_port_connect_change(struct usb_hub *hub, int port1,
+ 			if (port1 == 1 && pdata->platform_init)
+ 				pdata->platform_init(NULL);
+ 		}
+-		if (port1 == 1) {
+-			if (!(portstatus&USB_PORT_STAT_CONNECTION)) {
++		if ((port1 == 1) && (hdev->level == 0)) {
++			if (pdata && !(portstatus&USB_PORT_STAT_CONNECTION)) {
+ 				/* Must clear HOSTDISCONDETECT when disconnect*/
+ 				fsl_platform_set_usb_phy_dis(pdata, 0);
+ 			}
+diff --git a/drivers/usb/gadget/arcotg_udc.c b/drivers/usb/gadget/arcotg_udc.c
+index 0515636..1d3ee6d 100644
+--- a/drivers/usb/gadget/arcotg_udc.c
++++ b/drivers/usb/gadget/arcotg_udc.c
+@@ -2157,9 +2157,11 @@ static irqreturn_t fsl_udc_irq(int irq, void *_udc)
+ 
+ 	spin_lock_irqsave(&udc->lock, flags);
+ 
+-	if (try_wake_up_udc(udc) == false) {
++	if (try_wake_up_udc(udc) == false)
+ 		goto irq_end;
+-	}
++	else
++		status = IRQ_HANDLED;
++
+ #ifdef CONFIG_USB_OTG
+ 	/* if no gadget register in this driver, we need do noting */
+ 	if (udc->transceiver->gadget == NULL) {
+@@ -3164,7 +3166,6 @@ static int fsl_udc_resume(struct platform_device *pdev)
+ 	struct fsl_usb2_wakeup_platform_data *wake_up_pdata = pdata->wakeup_pdata;
+ 	printk(KERN_DEBUG "USB Gadget resume begins\n");
+ 
+-	mutex_lock(&udc_resume_mutex);
+ 	if (pdev->dev.power.status == DPM_RESUMING) {
+ 		printk(KERN_DEBUG "%s, Wait for wakeup thread finishes\n", __func__);
+ 		wait_event_interruptible(wake_up_pdata->wq, !wake_up_pdata->usb_wakeup_is_pending);
+@@ -3173,10 +3174,8 @@ static int fsl_udc_resume(struct platform_device *pdev)
+ 	pr_debug("%s(): stopped %d  suspended %d\n", __func__,
+ 		 udc_controller->stopped, udc_controller->suspended);
+ #ifdef CONFIG_USB_OTG
+-	if (udc_controller->transceiver->gadget == NULL) {
+-		mutex_unlock(&udc_resume_mutex);
++	if (udc_controller->transceiver->gadget == NULL)
+ 		return 0;
+-	}
+ #endif
+ 	mutex_lock(&udc_resume_mutex);
+ 
+diff --git a/drivers/usb/host/ehci-arc.c b/drivers/usb/host/ehci-arc.c
+index 5ccd15a..40bb8c3 100644
+--- a/drivers/usb/host/ehci-arc.c
++++ b/drivers/usb/host/ehci-arc.c
+@@ -147,11 +147,11 @@ static irqreturn_t ehci_fsl_pre_irq(int irq, void *dev)
+ 	pdata = hcd->self.controller->platform_data;
+ 
+ 	if (!test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags)) {
+-		if (pdata->irq_delay || !pdata->wakeup_event)
++		if (pdata->irq_delay || ((pdata->wakeup_event == WAKEUP_EVENT_VBUS) || (pdata->wakeup_event == WAKEUP_EVENT_INVALID)))
+ 			return IRQ_NONE;
+ 
+ 		pr_debug("%s\n", __func__);
+-		pdata->wakeup_event = 0;
++		pdata->wakeup_event = WAKEUP_EVENT_INVALID;
+ 		fsl_usb_recover_hcd(pdev);
+ 		return IRQ_HANDLED;
+ 	}
+@@ -425,9 +425,6 @@ static int ehci_fsl_bus_suspend(struct usb_hcd *hcd)
+ 		ehci_writel(ehci, tmp, &ehci->regs->command);
+ 	}
+ 
+-	if (pdata->platform_suspend)
+-		pdata->platform_suspend(pdata);
+-
+ 	usb_host_set_wakeup(hcd->self.controller, true);
+ 	fsl_usb_lowpower_mode(pdata, true);
+ 	fsl_usb_clk_gate(hcd->self.controller->platform_data, false);
+@@ -459,8 +456,6 @@ static int ehci_fsl_bus_resume(struct usb_hcd *hcd)
+ 		fsl_usb_lowpower_mode(pdata, false);
+ 	}
+ 
+-	if (pdata->platform_resume)
+-		pdata->platform_resume(pdata);
+ 	ret = ehci_bus_resume(hcd);
+ 	if (ret)
+ 		return ret;
+@@ -639,6 +634,7 @@ static int ehci_fsl_drv_suspend(struct platform_device *pdev,
+ 			usb_host_set_wakeup(hcd->self.controller, false);
+ 			fsl_usb_clk_gate(hcd->self.controller->platform_data, false);
+ 		}
++		disable_irq(hcd->irq);
+ 		return 0;
+ 	}
+ 
+@@ -730,6 +726,7 @@ static int ehci_fsl_drv_resume(struct platform_device *pdev)
+ 				fsl_usb_clk_gate(hcd->self.controller->platform_data, false);
+ 			}
+ 		}
++		enable_irq(hcd->irq);
+ 		return 0;
+ 	}
+ 	if (!test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags)) {
+diff --git a/drivers/usb/host/ehci-hub.c b/drivers/usb/host/ehci-hub.c
+index e7d3d8d..b45c02c 100644
+--- a/drivers/usb/host/ehci-hub.c
++++ b/drivers/usb/host/ehci-hub.c
+@@ -26,6 +26,11 @@
+  * Registers don't need cpu_to_le32, that happens transparently
+  */
+ 
++#ifdef CONFIG_ARCH_MXS
++#define MXS_USB_HOST_HACK
++
++#include <linux/fsl_devices.h>
++#endif
+ /*-------------------------------------------------------------------------*/
+ 
+ #define	PORT_WAKE_BITS	(PORT_WKOC_E|PORT_WKDISC_E|PORT_WKCONN_E)
+@@ -393,6 +398,14 @@ static int ehci_bus_resume (struct usb_hcd *hcd)
+ 	if (resume_needed) {
+ 		spin_unlock_irq(&ehci->lock);
+ 		msleep(20);
++#ifdef MXS_USB_HOST_HACK
++		{
++			struct fsl_usb2_platform_data *pdata;
++			pdata = hcd->self.controller->platform_data;
++			if (pdata && pdata->platform_resume)
++				pdata->platform_resume(pdata);
++		}
++#endif
+ 		spin_lock_irq(&ehci->lock);
+ 	}
+ 
+@@ -1008,6 +1021,16 @@ static int ehci_hub_control (
+ 			temp &= ~PORT_WKCONN_E;
+ 			temp |= PORT_WKDISC_E | PORT_WKOC_E;
+ 			ehci_writel(ehci, temp | PORT_SUSPEND, status_reg);
++#ifdef MXS_USB_HOST_HACK
++			spin_unlock_irqrestore(&ehci->lock, flags);
++			{
++				struct fsl_usb2_platform_data *pdata;
++				pdata = hcd->self.controller->platform_data;
++				if (pdata && pdata->platform_suspend)
++					pdata->platform_suspend(pdata);
++			}
++			spin_lock_irqsave(&ehci->lock, flags);
++#endif
+ 			if (hostpc_reg) {
+ 				spin_unlock_irqrestore(&ehci->lock, flags);
+ 				msleep(5);/* 5ms for HCD enter low pwr mode */
+-- 
+1.8.0
+

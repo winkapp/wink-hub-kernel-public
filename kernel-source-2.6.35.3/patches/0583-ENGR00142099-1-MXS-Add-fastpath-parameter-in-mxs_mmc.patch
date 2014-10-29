@@ -1,0 +1,53 @@
+From f450aabe5d87bcdd6682e41b6e9142cf4290a805 Mon Sep 17 00:00:00 2001
+From: Tony Lin <tony.lin@freescale.com>
+Date: Tue, 21 Jun 2011 13:16:49 +0800
+Subject: [PATCH 583/670] ENGR00142099-1 [MXS]Add fastpath parameter in
+ mxs_mmc_platform_data structure
+
+add parameter to control the threshold for using polling mode
+fastpath_sz will make all data transfer below this size use polling
+mode to wait for transfer complete. All data transfer above this
+size will still use interrupt mode to wait for transfer complete.
+set it to 0 if you want to disable polling mode
+
+Signed-off-by: Tony Lin <tony.lin@freescale.com>
+---
+ arch/arm/mach-mx28/device.c             | 2 ++
+ arch/arm/plat-mxs/include/mach/device.h | 1 +
+ 2 files changed, 3 insertions(+)
+
+diff --git a/arch/arm/mach-mx28/device.c b/arch/arm/mach-mx28/device.c
+index 2545a72..d2510f3 100644
+--- a/arch/arm/mach-mx28/device.c
++++ b/arch/arm/mach-mx28/device.c
+@@ -565,6 +565,7 @@ static struct mxs_mmc_platform_data mmc0_data = {
+ 	.write_uA       = 70000,
+ 	.clock_mmc = "ssp.0",
+ 	.power_mmc = NULL,
++	.fastpath_sz = 1024,
+ };
+ 
+ static struct resource mmc0_resource[] = {
+@@ -604,6 +605,7 @@ static struct mxs_mmc_platform_data mmc1_data = {
+ 	.write_uA       = 70000,
+ 	.clock_mmc = "ssp.1",
+ 	.power_mmc = NULL,
++	.fastpath_sz = 1024,
+ };
+ 
+ static struct resource mmc1_resource[] = {
+diff --git a/arch/arm/plat-mxs/include/mach/device.h b/arch/arm/plat-mxs/include/mach/device.h
+index f46b984..86b614b 100644
+--- a/arch/arm/plat-mxs/include/mach/device.h
++++ b/arch/arm/plat-mxs/include/mach/device.h
+@@ -186,6 +186,7 @@ struct mxs_mmc_platform_data {
+ 	int write_uA;
+ 	char *power_mmc;
+ 	char *clock_mmc;
++	int fastpath_sz;
+ };
+ /* end of mxs ssp sd/mmc data definitions */
+ 
+-- 
+1.8.0
+

@@ -1,0 +1,57 @@
+From cd1d4076ba764594cca4e89b44ebd16814bdd082 Mon Sep 17 00:00:00 2001
+From: Peter Chen <peter.chen@freescale.com>
+Date: Thu, 30 Dec 2010 12:49:10 +0800
+Subject: [PATCH 575/670] ENGR00137161 MX28-MSL: PSWITCH interrupt should be
+ enabled after suspend fails
+
+PSWITCH interrupt should be enabled after device suspend fails,
+Otherwise, the POWER key will not be active again
+
+Signed-off-by: Peter Chen <peter.chen@freescale.com>
+(cherry picked from commit 0ba68f37238ecd3e7f47264d1a612485a91f2c40)
+---
+ arch/arm/mach-mx28/pm.c | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/mach-mx28/pm.c b/arch/arm/mach-mx28/pm.c
+index 3dcbb1e..0e022ae 100644
+--- a/arch/arm/mach-mx28/pm.c
++++ b/arch/arm/mach-mx28/pm.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2010 Freescale Semiconductor, Inc.
++ * Copyright (C) 2010-2011 Freescale Semiconductor, Inc.
+  * Copyright 2008 Embedded Alley Solutions, Inc All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+@@ -194,6 +194,19 @@ static int mx28_pm_begin(suspend_state_t state)
+ 	return 0;
+ }
+ 
++static void mx28_pm_recover(void)
++{
++	/*
++	 * The PSWITCH interrupt is enabled at do_standby, if the deivce
++	 * suspend failed, the enable operation will not be executed, in that
++	 * case, the POWER key will not be active again.
++	 */
++	__raw_writel(BM_POWER_CTRL_PSWITCH_IRQ,
++		REGS_POWER_BASE + HW_POWER_CTRL_CLR);
++	__raw_writel(BM_POWER_CTRL_ENIRQ_PSWITCH,
++		REGS_POWER_BASE + HW_POWER_CTRL_SET);
++}
++
+ static void mx28_pm_end(void)
+ {
+ 	/*XXX: Nothing to do */
+@@ -221,6 +234,7 @@ static struct platform_suspend_ops mx28_suspend_ops = {
+ 	.valid	= mx28_pm_valid,
+ 	.begin	= mx28_pm_begin,
+ 	.end	= mx28_pm_end,
++	.recover = mx28_pm_recover,
+ };
+ 
+ void mx28_pm_idle(void)
+-- 
+1.8.0
+

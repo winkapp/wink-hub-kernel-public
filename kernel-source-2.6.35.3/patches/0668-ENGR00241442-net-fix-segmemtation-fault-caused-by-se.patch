@@ -1,0 +1,113 @@
+From a65e0d8f8f25abf0877bb88d3ca00c27f488e68e Mon Sep 17 00:00:00 2001
+From: Grace Si <b18730@freescale.com>
+Date: Fri, 25 Jan 2013 15:41:42 +0800
+Subject: [PATCH 668/670] ENGR00241442 net: fix segmemtation fault caused by
+ set port mirror
+
+Switch:Set port mirror will cause segmemtation fault at the
+first time.100%.
+
+Run unit_test program:
+./mxc_l2switch_test.out eth0 setportmirror 0 2 0 1 0
+ 0 0 0 12345678 2345 1
+
+kernel dump info:
+Unable to handle kernel NULL pointer dereference at virtual
+address 00000030
+Modules linked in:
+CPU: 0    Not tainted  (2.6.35.3-662-gffedc42 #1)
+PC is at switch_enet_ioctl+0xd00/0x22c0
+LR is at 0x1
+pc : [<c027b684>]    lr : [<00000001>]    psr: 60000013
+sp : c7107d38  ip : 00000020  fp : c7107e24
+r10: bed76bfc  r9 : c7106000  r8 : 00000001
+r7 : 00000000  r6 : 00000000  r5 : 00000030  r4 : c8908000
+r3 : 00000030  r2 : 00000000  r1 : bed76c04  r0 : 00000010
+Flags: nZCv  IRQs on  FIQs on  Mode SVC_32  ISA ARM  Segment user
+Control: 0005317f  Table: 4710c000  DAC: 00000015
+Process mxc_l2switch_te (pid: 2158, stack limit = 0xc7106270)
+Stack: (0xc7107d38 to 0xc7108000)
+
+Backtrace:
+[<c027a984>] (switch_enet_ioctl+0x0/0x22c0) from [<c032ac90>] (dev_ifsioc+0x2b0/
+0x2f0)
+[<c032a9e0>] (dev_ifsioc+0x0/0x2f0) from [<c032b350>] (dev_ioctl+0x680/0x764)
+r6:00009108 r5:c0562f08 r4:bed76adc r3:00000001
+[<c032acd0>] (dev_ioctl+0x0/0x764) from [<c03177c4>] (sock_ioctl+0x214/0x24c)
+[<c03175b0>] (sock_ioctl+0x0/0x24c) from [<c00cd914>] (vfs_ioctl+0x34/0xb4)
+r6:00009108 r5:bed76adc r4:c7da5900 r3:c03175b0
+[<c00cd8e0>] (vfs_ioctl+0x0/0xb4) from [<c00cdfc4>] (do_vfs_ioctl+0x528/0x590)
+r6:00009108 r5:c7da5900 r4:bed76adc r3:c7a5c180
+[<c00cda9c>] (do_vfs_ioctl+0x0/0x590) from [<c00ce084>] (sys_ioctl+0x58/0x7c)
+r9:c7106000 r8:00000000 r7:00000003 r6:00009108 r5:bed76adc r4:c7da5900
+[<c00ce02c>] (sys_ioctl+0x0/0x7c) from [<c00308c0>] (ret_fast_syscall+0x0/0x2c)
+r8:c0030a68 r7:00000036 r6:bed76ec2 r5:00009108 r4:00000003
+Code: e1a02008 eb04d513 e5845040 e5943040 (e5932000)
+
+The root cause is loss pointer symbol cause non-valid pointer use.
+
+Signed-off-by: Fugang Duan  <B38611@freescale.com>
+---
+ drivers/net/fec_switch.c | 18 +++++++++---------
+ 1 file changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/net/fec_switch.c b/drivers/net/fec_switch.c
+index 91e94cf..0ffbb57 100644
+--- a/drivers/net/fec_switch.c
++++ b/drivers/net/fec_switch.c
+@@ -1,7 +1,7 @@
+ /*
+  *  L2 switch Controller (Etheren switch) driver for Mx28.
+  *
+- *  Copyright (C) 2012 Freescale Semiconductor, Inc. All Rights Reserved.
++ *  Copyright (C) 2013 Freescale Semiconductor, Inc. All Rights Reserved.
+  *    Shrek Wu (B16972@freescale.com)
+  *
+  *  This program is free software; you can redistribute  it and/or modify it
+@@ -349,7 +349,7 @@ static struct eswPortInfo *esw_portinfofifo_read(
+ 
+ 	fecp = fep->hwp;
+ 	if (readl(&fecp->ESW_LSR) == 0) {
+-		printk(KERN_ERR "%s: ESW_LSR = %lx\n",
++		printk(KERN_ERR "%s: ESW_LSR = %x\n",
+ 			__func__, readl(&fecp->ESW_LSR));
+ 		return NULL;
+ 	}
+@@ -973,7 +973,7 @@ static int esw_ip_snoop_config(struct switch_enet_private *fep,
+ 	protocol_type = ip_header_protocol;
+ 	writel(tmp | MCF_ESW_IPSNP_PROTOCOL(protocol_type),
+ 		 &fecp->ESW_IPSNP[num]);
+-	printk(KERN_INFO "%s : ESW_IPSNP[%d] %#lx\n",
++	printk(KERN_INFO "%s : ESW_IPSNP[%d] %#x\n",
+ 		__func__, num, readl(&fecp->ESW_IPSNP[num]));
+ 	return 0;
+ }
+@@ -1237,10 +1237,10 @@ static int esw_port_mirroring_config(struct switch_enet_private *fep,
+ 
+ 
+ 	writel(tmp, &fecp->ESW_MCR);
+-	printk(KERN_INFO "%s : MCR %#lx, EGMAP %#lx, INGMAP %#lx;\n"
+-		"ENGSAH %#lx, ENGSAL %#lx ;ENGDAH %#lx, ENGDAL %#lx;\n"
+-		"INGSAH %#lx, INGSAL %#lx\n;INGDAH %#lx, INGDAL %#lx;\n",
+-		__func__, readl(fecp->ESW_MCR),
++	printk(KERN_INFO "%s : MCR %#x, EGMAP %#x, INGMAP %#x;\n"
++		"ENGSAH %#x, ENGSAL %#x ;ENGDAH %#x, ENGDAL %#x;\n"
++		"INGSAH %#x, INGSAL %#x\n;INGDAH %#x, INGDAL %#x;\n",
++		__func__, readl(&fecp->ESW_MCR),
+ 		readl(&fecp->ESW_EGMAP),
+ 		readl(&fecp->ESW_INGMAP),
+ 		readl(&fecp->ESW_ENGSAH),
+@@ -1954,8 +1954,8 @@ void esw_check_rxb_txb_interrupt(struct switch_enet_private *fep)
+ 	writel(MCF_ESW_IMR_TXB | MCF_ESW_IMR_TXF |
+ 		MCF_ESW_IMR_LRN | MCF_ESW_IMR_RXB | MCF_ESW_IMR_RXF,
+ 		&fecp->switch_imask);
+-	printk(KERN_ERR "%s: fecp->ESW_DBCR %#lx, fecp->ESW_P0FFEN %#lx"
+-		" fecp->ESW_BKLR %#lx\n", __func__, fecp->ESW_DBCR,
++	printk(KERN_ERR "%s: fecp->ESW_DBCR %#lx, fecp->ESW_P0FFEN %#x"
++		" fecp->ESW_BKLR %#x\n", __func__, fecp->ESW_DBCR,
+ 		readl(&fecp->ESW_P0FFEN),
+ 		readl(&fecp->ESW_BKLR));
+ }
+-- 
+1.8.0
+

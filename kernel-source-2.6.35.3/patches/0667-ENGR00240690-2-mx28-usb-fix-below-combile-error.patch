@@ -1,0 +1,58 @@
+From 4f8ae0429ac9e669fc4febdc7ab85d898fa64ea6 Mon Sep 17 00:00:00 2001
+From: Peter Chen <peter.chen@freescale.com>
+Date: Mon, 21 Jan 2013 10:53:08 +0800
+Subject: [PATCH 667/670] ENGR00240690-2: mx28-usb: fix below combile error
+
+This config is needed for SoC level, so move it from
+driver to platform code.
+
+USB module compile failed if set menuconfig like this:
+Device Drivers --->
+[*] USB support --->
+<M> EHCI HCD (USB 2.0) support
+< > USB Gadget Support --->
+< > USB OTG pin detect support
+$ make uImage
+CHK     include/linux/version.h
+CHK     include/generated/utsrelease.h
+make[1]: `include/generated/mach-types.h' is up to date.
+CALL    scripts/checksyscalls.sh
+CHK     include/generated/compile.h
+CC      arch/arm/mach-mx28/usb_dr.o
+arch/arm/mach-mx28/usb_dr.c: In function 'enter_phy_lowpower_suspend':
+arch/arm/mach-mx28/usb_dr.c:133:3: error: implicit declaration of
+function 'fsl_safe_writel' [-Werror=implicit-function-declaration]
+arch/arm/mach-mx28/usb_dr.c: At top level:
+arch/arm/mach-mx28/usb_dr.c:529:31: warning: 'dr_udc_device'
+defined but not used [-Wunused-variable]
+cc1: some warnings being treated as errors
+make[1]: *** [arch/arm/mach-mx28/usb_dr.o] Error 1
+make: *** [arch/arm/mach-mx28] Error 2
+
+Signed-off-by: Peter Chen <peter.chen@freescale.com>
+---
+ drivers/usb/gadget/Kconfig | 8 --------
+ 1 file changed, 8 deletions(-)
+
+diff --git a/drivers/usb/gadget/Kconfig b/drivers/usb/gadget/Kconfig
+index cc5f056..582597b 100644
+--- a/drivers/usb/gadget/Kconfig
++++ b/drivers/usb/gadget/Kconfig
+@@ -499,14 +499,6 @@ config USB_ARC
+ 	default USB_GADGET
+ 	select USB_GADGET_SELECTED
+ 
+-config WORKAROUND_ARCUSB_REG_RW
+-        bool "work around mx28 arch register write"
+-        depends on ARCH_MX28 && USB_ARC
+-        default ARCH_MX28
+-        help
+-           MX28 require read ARC register before write. Use SWP intructure to
+-           implement this requirement.
+-
+ config USB_GADGET_LANGWELL
+ 	boolean "Intel Langwell USB Device Controller"
+ 	depends on PCI
+-- 
+1.8.0
+

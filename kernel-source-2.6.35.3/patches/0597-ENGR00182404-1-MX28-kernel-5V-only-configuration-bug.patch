@@ -1,0 +1,227 @@
+From e93820b38df137afcf1857b30ac6f071b839d58d Mon Sep 17 00:00:00 2001
+From: Grace Si <b18730@freescale.com>
+Date: Thu, 10 May 2012 17:04:21 +0800
+Subject: [PATCH 597/670] ENGR00182404-1 [MX28] kernel 5V only configuration
+ bug fixes and improvement
+
+1. Add 5V only handling in kernel, add persistent bit to check whether
+it is 5V only configuration in kernel and then enable correct FIQs and IRQs
+and handle FIQ.
+2. Add VDDD, VDDIO and VDDA debouncing check in FIQ handler.
+
+Signed-off-by: Grace Si <b18730@freescale.com>
+---
+ drivers/power/mxs/fiq.S   | 53 +++++++++++++++++++++++++++++++++++++----------
+ drivers/power/mxs/linux.c | 41 ++++++++++++++++++++++++++++++++++--
+ 2 files changed, 81 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/power/mxs/fiq.S b/drivers/power/mxs/fiq.S
+index 1ad380d..db30ff4 100644
+--- a/drivers/power/mxs/fiq.S
++++ b/drivers/power/mxs/fiq.S
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2009-2010 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2009-2012 Freescale Semiconductor, Inc. All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -23,6 +23,7 @@
+ #include <asm/pgtable-hwdef.h>
+ #include <mach/regs-power.h>
+ #include <mach/../../regs-clkctrl.h>
++#include <mach/../../regs-digctl.h>
+ #include <mach/regs-timrot.h>
+ 
+ 	.align 5
+@@ -32,20 +33,46 @@
+ 	.globl lock_vector_tlb
+ 
+ power_fiq_start:
+-	ldr 	r8,power_reg
++	ldr r8,power_reg
+ 	ldr	r9,[r8,#HW_POWER_CTRL ]
+ 	ldr	r10,power_off
+ 
+-	@ when VDDIO_BO_IRQ,
+-	@ disabled, handled in IRQ for now
+-	@tst 	r9, #BM_POWER_CTRL_VDDIO_BO_IRQ
+ 
++    @ If battery Brownout, power off chip
++	tst     r9, #BM_POWER_CTRL_BATT_BO_IRQ
++	strne 	r10,[r8,#HW_POWER_RESET]
++
++
++	@ For 5V only configration, VDDIO_BO is set as FIQ,
++	@ For other cases, VDDIO_BO is handled in IRQ
+ 
+-	@ when BATT_BO_IRQ,  VDDD_BO_IRQ, VDDA_BO_IRQ, power off chip
+-	ldr     r11,power_bo
++	@ check whether it is VDDD_BO_IRQ, VDDA_BO_IRQ, VDDIO_BO_IRQ
++	ldr r11,power_bo
+ 	tst	r9, r11
+-	strne 	r10,[r8,#HW_POWER_RESET]
++	beq	check_vdd5v
++
++	ldr r9, power_digctl
++	ldr r12, [r9, #HW_DIGCTL_MICROSECONDS];
++	add	r12, #11  @ debouce time is 11 microseconds.
++
++    @ Loop for specified time to debounce the brownout status bits.
+ 
++loop_check:
++	ldr	r10,  [r8, #HW_POWER_STS]
++    ldr r11, sts_bo
++	tst	r10, r11
++    beq     done      @ false brownout go to done.
++
++	ldr r9, power_digctl
++	ldr	r11, [r9, #HW_DIGCTL_MICROSECONDS];
++	cmp	r11, r12
++	blt	loop_check
++
++    @ true brownout, power off chip.
++	ldr	r10,power_off
++	str	r10, [r8, #HW_POWER_RESET]
++
++check_vdd5v:
+ 	@VDD5V_DROOP_IRQ
+ 	tst     r9, #BM_POWER_CTRL_VDD5V_DROOP_IRQ
+ 	beq	    check_dcdc4p2
+@@ -93,18 +120,22 @@ check_dcdc4p2:
+ 	mov	r11, #BM_POWER_CTRL_ENIRQ_DCDC4P2_BO
+ 	strne	r11, [r8, #HW_POWER_CTRL_CLR]
+ 
+-
++done:
+ 
+ 	@return from fiq
+ 	subs    pc,lr, #4
+ 
+ power_reg:
+ 	.long IO_ADDRESS(POWER_PHYS_ADDR)
++power_digctl:
++	.long IO_ADDRESS(DIGCTL_PHYS_ADDR)
+ power_off:
+ 	.long 0x3e770001
+ power_bo:
+-	.long BM_POWER_CTRL_BATT_BO_IRQ | \
+-	      BM_POWER_CTRL_VDDA_BO_IRQ | BM_POWER_CTRL_VDDD_BO_IRQ
++	.long BM_POWER_CTRL_VDDA_BO_IRQ|BM_POWER_CTRL_VDDD_BO_IRQ \
++		|BM_POWER_CTRL_VDDIO_BO_IRQ
++sts_bo:
++    .long BM_POWER_STS_VDDIO_BO | BM_POWER_STS_VDDA_BO	| BM_POWER_STS_VDDD_BO
+ power_fiq_count:
+ 	.long 0
+ power_fiq_end:
+diff --git a/drivers/power/mxs/linux.c b/drivers/power/mxs/linux.c
+index 3388307..d5185fa 100644
+--- a/drivers/power/mxs/linux.c
++++ b/drivers/power/mxs/linux.c
+@@ -4,7 +4,7 @@
+  * Author: Steve Longerbeam <stevel@embeddedalley.com>
+  *
+  * Copyright (C) 2008 EmbeddedAlley Solutions Inc.
+- * Copyright 2008-2010 Freescale Semiconductor, Inc.
++ * Copyright (C) 2008-2012 Freescale Semiconductor, Inc.
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License version 2, as
+@@ -28,6 +28,7 @@
+ #include <mach/hardware.h>
+ #include <mach/irqs.h>
+ #include <mach/clock.h>
++#include <mach/regs-rtc.h>
+ #include <linux/delay.h>
+ #include <linux/proc_fs.h>
+ #include <linux/interrupt.h>
+@@ -775,11 +776,26 @@ static int mxs_bat_probe(struct platform_device *pdev)
+ {
+ 	struct mxs_info *info;
+ 	int ret = 0;
++	void *base = IO_ADDRESS(RTC_PHYS_ADDR);
+ 
+ 
+ 	/* enable usb device presence detection */
+ 	fsl_enable_usb_plugindetect();
+ 
++
++
++    /* check bit 11, bit 11 is set in power_prep.c if it is 5V only build.
++       we don't need initialize battery for 5V only build
++    */
++	if ((__raw_readl(base + HW_RTC_PERSISTENT1) & 0x800)) {
++
++		__raw_writel(0x800, base + HW_RTC_PERSISTENT1_CLR);
++
++		/* InitializeFiqSystem(); */
++		ddi_power_InitOutputBrownouts();
++		return 0;
++    }
++
+ 	ret = ddi_power_init_battery();
+ 	if (ret) {
+ 		printk(KERN_ERR "Aborting power driver initialization\n");
+@@ -975,6 +991,7 @@ static int mxs_bat_probe(struct platform_device *pdev)
+ 		pr_debug("No onboard vbus 5v reg provided\n");
+ 		info->onboard_vbus5v = NULL;
+ 	}
++
+ 	return 0;
+ 
+ unregister_ac:
+@@ -1127,9 +1144,20 @@ static struct proc_dir_entry *power_fiq_proc;
+ static int __init mxs_bat_init(void)
+ {
+ 	struct clk *cpu, *pll0;
++	int ret;
++    int no_battery = false;
+ 
+ #ifdef POWER_FIQ
+-	int ret;
++
++    /* check bit 11, bit 11 is set in power_prep.c if it is 5V only build.
++    */
++
++	if ((__raw_readl(IO_ADDRESS(RTC_PHYS_ADDR) + HW_RTC_PERSISTENT1)
++		& 0x800)) {
++		no_battery = true;
++		printk(KERN_NOTICE "This is 5V only build. \r\n");
++	}
++
+ 	ret = claim_fiq(&power_fiq);
+ 	if (ret) {
+ 		pr_err("Can't claim fiq");
+@@ -1143,6 +1171,9 @@ static int __init mxs_bat_init(void)
+ 		disable_irq(IRQ_DCDC4P2_BRNOUT);
+ 		disable_irq(IRQ_BATT_BRNOUT);
+ 		disable_irq(IRQ_VDDD_BRNOUT);
++		disable_irq(IRQ_VDDA_BRNOUT);
++		if (no_battery)
++			disable_irq(IRQ_VDDIO_BRNOUT);
+ #ifndef CONFIG_ARCH_MX28
+ 		disable_irq(IRQ_VDD18_BRNOUT);
+ #endif
+@@ -1153,6 +1184,9 @@ static int __init mxs_bat_init(void)
+ 		mxs_set_irq_fiq(IRQ_DCDC4P2_BRNOUT, 1);
+ 		mxs_set_irq_fiq(IRQ_BATT_BRNOUT, 1);
+ 		mxs_set_irq_fiq(IRQ_VDDD_BRNOUT, 1);
++		mxs_set_irq_fiq(IRQ_VDDA_BRNOUT, 1);
++		if (no_battery)
++			mxs_set_irq_fiq(IRQ_VDDIO_BRNOUT, 1);
+ #ifndef CONFIG_ARCH_MX28
+ 		mxs_set_irq_fiq(IRQ_VDD18_BRNOUT, 1);
+ #endif
+@@ -1165,6 +1199,9 @@ static int __init mxs_bat_init(void)
+ 		enable_irq(IRQ_DCDC4P2_BRNOUT);
+ 		enable_irq(IRQ_BATT_BRNOUT);
+ 		enable_irq(IRQ_VDDD_BRNOUT);
++		enable_irq(IRQ_VDDA_BRNOUT);
++		if (no_battery)
++			enable_irq(IRQ_VDDIO_BRNOUT);
+ #ifndef CONFIG_ARCH_MX28
+ 		enable_irq(IRQ_VDD18_BRNOUT);
+ #endif
+-- 
+1.8.0
+

@@ -1,0 +1,37 @@
+From 8975f2011f0b7888e1796f777cf492c0510118a7 Mon Sep 17 00:00:00 2001
+From: Danny Nold <dannynold@freescale.com>
+Date: Thu, 16 Jun 2011 10:10:35 -0500
+Subject: [PATCH 593/670] ENGR38993445-2 AUART:Serial device platform
+ configuration: Increase RX buffer
+
+Increase RX buffer size from 8 bytes to 4096
+
+Signed-off-by: Danny Nold <dannynold@freescale.com>
+Signed-off-by: Huang Shijie <b32955@freescale.com>
+---
+ arch/arm/mach-mx23/serial.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm/mach-mx23/serial.c b/arch/arm/mach-mx23/serial.c
+index 85a08cd..e9367a3 100644
+--- a/arch/arm/mach-mx23/serial.c
++++ b/arch/arm/mach-mx23/serial.c
+@@ -1,5 +1,5 @@
+ /*
+-  * Copyright (C) 2010 Freescale Semiconductor, Inc. All Rights Reserved.
++  * Copyright (C) 2010-2011 Freescale Semiconductor, Inc. All Rights Reserved.
+   *
+   * This program is distributed in the hope that it will be useful,
+   * This program is free software; you can redistribute it and/or modify
+@@ -73,7 +73,7 @@ static struct mxs_auart_plat_data mxs_auart1_platdata = {
+ #ifdef CONFIG_MXS_AUART1_DMA_ENABLE
+ 	.dma_mode = 1,
+ #endif
+-	.dma_rx_buffer_size = 8,
++	.dma_rx_buffer_size = 4096,
+ 	.timeout = HZ,
+ };
+ #endif
+-- 
+1.8.0
+

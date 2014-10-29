@@ -1,0 +1,77 @@
+From 7bacd63f2f0a5d2aeed021f4508da27d699ac065 Mon Sep 17 00:00:00 2001
+From: San Mehat <san@google.com>
+Date: Thu, 21 Oct 2010 14:07:13 +0800
+Subject: [PATCH 432/670] Android block: genhd: Add disk/partition specific
+ uevent callbacks for partition info
+
+For disk devices, a new uevent parameter 'NPARTS' specifies the number
+of partitions detected by the kernel. Partition devices get 'PARTN' which
+specifies the partitions index in the table.
+
+Signed-off-by: San Mehat <san@google.com>
+---
+ block/genhd.c         | 17 +++++++++++++++++
+ fs/partitions/check.c |  8 ++++++++
+ 2 files changed, 25 insertions(+)
+
+diff --git a/block/genhd.c b/block/genhd.c
+index 59a2db6..aa62825 100644
+--- a/block/genhd.c
++++ b/block/genhd.c
+@@ -1006,6 +1006,22 @@ static void disk_release(struct device *dev)
+ 	free_part_stats(&disk->part0);
+ 	kfree(disk);
+ }
++
++static int disk_uevent(struct device *dev, struct kobj_uevent_env *env)
++{
++	struct gendisk *disk = dev_to_disk(dev);
++	struct disk_part_iter piter;
++	struct hd_struct *part;
++	int cnt = 0;
++
++	disk_part_iter_init(&piter, disk, 0);
++	while((part = disk_part_iter_next(&piter)))
++		cnt++;
++	disk_part_iter_exit(&piter);
++	add_uevent_var(env, "NPARTS=%u", cnt);
++	return 0;
++}
++
+ struct class block_class = {
+ 	.name		= "block",
+ };
+@@ -1024,6 +1040,7 @@ static struct device_type disk_type = {
+ 	.groups		= disk_attr_groups,
+ 	.release	= disk_release,
+ 	.devnode	= block_devnode,
++	.uevent		= disk_uevent,
+ };
+ 
+ #ifdef CONFIG_PROC_FS
+diff --git a/fs/partitions/check.c b/fs/partitions/check.c
+index 5dcd4b0..e37a293 100644
+--- a/fs/partitions/check.c
++++ b/fs/partitions/check.c
+@@ -341,10 +341,18 @@ static void part_release(struct device *dev)
+ 	kfree(p);
+ }
+ 
++static int part_uevent(struct device *dev, struct kobj_uevent_env *env)
++{
++	struct hd_struct *part = dev_to_part(dev);
++	add_uevent_var(env, "PARTN=%u", part->partno);
++	return 0;
++}
++
+ struct device_type part_type = {
+ 	.name		= "partition",
+ 	.groups		= part_attr_groups,
+ 	.release	= part_release,
++	.uevent		= part_uevent,
+ };
+ 
+ static void delete_partition_rcu_cb(struct rcu_head *head)
+-- 
+1.8.0
+

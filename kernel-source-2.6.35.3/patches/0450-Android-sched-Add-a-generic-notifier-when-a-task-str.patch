@@ -1,0 +1,116 @@
+From 80d83542ba7bac6233187defd8c3b70c602f6285 Mon Sep 17 00:00:00 2001
+From: San Mehat <san@google.com>
+Date: Mon, 1 Nov 2010 16:37:17 +0800
+Subject: [PATCH 450/670] Android sched: Add a generic notifier when a task
+ struct is about to be freed
+
+This patch adds a notifier which can be used by subsystems that may
+be interested in when a task has completely died and is about to
+have it's last resource freed.
+The Android lowmemory killer uses this to determine when a task
+it has killed has finally given up its goods.
+
+Signed-off-by: San Mehat <san@google.com>
+---
+ drivers/staging/android/lowmemorykiller.c | 19 +++++++++++++++++++
+ include/linux/sched.h                     |  3 +++
+ kernel/fork.c                             | 18 ++++++++++++++++++
+ 3 files changed, 40 insertions(+)
+
+diff --git a/drivers/staging/android/lowmemorykiller.c b/drivers/staging/android/lowmemorykiller.c
+index 4235bc6..c242bb3 100644
+--- a/drivers/staging/android/lowmemorykiller.c
++++ b/drivers/staging/android/lowmemorykiller.c
+@@ -63,6 +63,24 @@ static struct task_struct *lowmem_deathpending;
+ 			printk(x);			\
+ 	} while (0)
+ 
++static int
++task_notify_func(struct notifier_block *self, unsigned long val, void *data);
++
++static struct notifier_block task_nb = {
++	.notifier_call	= task_notify_func,
++};
++
++static int
++task_notify_func(struct notifier_block *self, unsigned long val, void *data)
++{
++	struct task_struct *task = data;
++	if (task == lowmem_deathpending) {
++		lowmem_deathpending = NULL;
++		task_free_unregister(&task_nb);
++	}
++	return NOTIFY_OK;
++}
++
+ static int lowmem_shrink(struct shrinker *s, int nr_to_scan, gfp_t gfp_mask)
+ {
+ 	struct task_struct *p;
+@@ -162,6 +180,7 @@ static int lowmem_shrink(struct shrinker *s, int nr_to_scan, gfp_t gfp_mask)
+ 			     selected->pid, selected->comm,
+ 			     selected_oom_adj, selected_tasksize);
+ 		lowmem_deathpending = selected;
++		task_free_register(&task_nb);
+ 		force_sig(SIGKILL, selected);
+ 		rem -= selected_tasksize;
+ 	}
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 5ee397e..794b8f4 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -1682,6 +1682,9 @@ static inline void put_task_struct(struct task_struct *t)
+ extern void task_times(struct task_struct *p, cputime_t *ut, cputime_t *st);
+ extern void thread_group_times(struct task_struct *p, cputime_t *ut, cputime_t *st);
+ 
++extern int task_free_register(struct notifier_block *n);
++extern int task_free_unregister(struct notifier_block *n);
++
+ /*
+  * Per process flags
+  */
+diff --git a/kernel/fork.c b/kernel/fork.c
+index b6cce14..19615bc 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -147,6 +147,9 @@ struct kmem_cache *vm_area_cachep;
+ /* SLAB cache for mm_struct structures (tsk->mm) */
+ static struct kmem_cache *mm_cachep;
+ 
++/* Notifier list called when a task struct is freed */
++static ATOMIC_NOTIFIER_HEAD(task_free_notifier);
++
+ static void account_kernel_stack(struct thread_info *ti, int account)
+ {
+ 	struct zone *zone = page_zone(virt_to_page(ti));
+@@ -177,6 +180,20 @@ static inline void put_signal_struct(struct signal_struct *sig)
+ 		free_signal_struct(sig);
+ }
+ 
++int task_free_register(struct notifier_block *n)
++{
++	return atomic_notifier_chain_register(&task_free_notifier, n);
++}
++
++EXPORT_SYMBOL(task_free_register);
++
++int task_free_unregister(struct notifier_block *n)
++{
++	return atomic_notifier_chain_unregister(&task_free_notifier, n);
++}
++
++EXPORT_SYMBOL(task_free_unregister);
++
+ void __put_task_struct(struct task_struct *tsk)
+ {
+ 	WARN_ON(!tsk->exit_state);
+@@ -187,6 +204,7 @@ void __put_task_struct(struct task_struct *tsk)
+ 	delayacct_tsk_free(tsk);
+ 	put_signal_struct(tsk->signal);
+ 
++	atomic_notifier_call_chain(&task_free_notifier, 0, tsk);
+ 	if (!profile_handoff_task(tsk))
+ 		free_task(tsk);
+ }
+-- 
+1.8.0
+

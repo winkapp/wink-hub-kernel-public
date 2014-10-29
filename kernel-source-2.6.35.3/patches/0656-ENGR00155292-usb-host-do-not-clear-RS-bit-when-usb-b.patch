@@ -1,0 +1,87 @@
+From 0af7ead694e7c76ba32c8ad97cd55bf76a409eeb Mon Sep 17 00:00:00 2001
+From: Peter Chen <peter.chen@freescale.com>
+Date: Wed, 24 Aug 2011 17:05:31 +0800
+Subject: [PATCH 656/670] ENGR00155292 usb-host: do not clear RS bit when usb
+ bus goes to suspend
+
+The standard EHCI design will clear RS bit after usb bus goes to
+suspend, but it causes some remote wakeup issues, like remote-wakeup
+featured device will be reset after resuming.
+
+According to usb 2.0 spec, the SOF need to be sent out within 3ms
+after resume signal ends, or device may consider host disconnects
+with device. Freescale's USB Controller (Chipidea's core) will ends
+up resume signal automatically within 21ms after it recevices remote
+wakeup signal. So, if software does not set RS bit within 21ms after
+it recevices remote wakeup signal, the problem described above will
+be occurred.
+
+Signed-off-by: Peter Chen <peter.chen@freescale.com>
+---
+ drivers/usb/host/ehci-arc.c | 17 +++++++++++++++--
+ drivers/usb/host/ehci-fsl.h |  3 ++-
+ 2 files changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/host/ehci-arc.c b/drivers/usb/host/ehci-arc.c
+index c98acb4..5ccd15a 100644
+--- a/drivers/usb/host/ehci-arc.c
++++ b/drivers/usb/host/ehci-arc.c
+@@ -126,7 +126,7 @@ void fsl_usb_recover_hcd(struct platform_device *pdev)
+ 	 * CMDRUN bit in 20ms to keep port status.
+ 	 */
+ 	cmd = ehci_readl(ehci, &ehci->regs->command);
+-	if (!(cmd & CMD_RUN)) {
++	if (!(cmd & CMD_RUN) || (hcd->state == HC_STATE_SUSPENDED)) {
+ 		ehci_writel(ehci, ehci->command, &ehci->regs->command);
+ 		/* Resume root hub here? */
+ 		usb_hcd_resume_root_hub(hcd);
+@@ -401,6 +401,9 @@ static int ehci_fsl_bus_suspend(struct usb_hcd *hcd)
+ {
+ 	int ret = 0;
+ 	struct fsl_usb2_platform_data *pdata;
++	u32 tmp, portsc;
++	struct ehci_hcd *ehci = hcd_to_ehci(hcd);
++
+ 	pdata = hcd->self.controller->platform_data;
+ 	printk(KERN_DEBUG "%s, %s\n", __func__, pdata->name);
+ 
+@@ -410,7 +413,17 @@ static int ehci_fsl_bus_suspend(struct usb_hcd *hcd)
+ 		return 0;
+ 	}
+ 
+-	ehci_bus_suspend(hcd);
++	portsc = ehci_readl(ehci, &ehci->regs->port_status[0]);
++	ret = ehci_bus_suspend(hcd);
++	if (ret != 0)
++		return ret;
++
++	if (portsc & PORT_CCS) {
++		printk(KERN_DEBUG "there is a device on the port\n");
++		tmp = ehci_readl(ehci, &ehci->regs->command);
++		tmp |= CMD_RUN;
++		ehci_writel(ehci, tmp, &ehci->regs->command);
++	}
+ 
+ 	if (pdata->platform_suspend)
+ 		pdata->platform_suspend(pdata);
+diff --git a/drivers/usb/host/ehci-fsl.h b/drivers/usb/host/ehci-fsl.h
+index 8a12eec..017a921 100644
+--- a/drivers/usb/host/ehci-fsl.h
++++ b/drivers/usb/host/ehci-fsl.h
+@@ -1,4 +1,4 @@
+-/* Copyright (c) 2005 freescale semiconductor
++/* Copyright (c) 2013 freescale semiconductor
+  * Copyright (c) 2005 MontaVista Software
+  *
+  * This program is free software; you can redistribute  it and/or modify it
+@@ -30,6 +30,7 @@
+ #define	PORT_PTS_SERIAL		(3<<30)
+ #define PORT_PTS_PTW		(1<<28)
+ #define PORT_PTS_PHCD		(1<<23)
++#define PORT_CCS		(1<<0)
+ #define FSL_SOC_USB_PORTSC2	0x188
+ #define FSL_SOC_USB_USBMODE	0x1a8
+ #define USBMODE_CM_HOST		(3 << 0)	/* controller mode: host */
+-- 
+1.8.0
+

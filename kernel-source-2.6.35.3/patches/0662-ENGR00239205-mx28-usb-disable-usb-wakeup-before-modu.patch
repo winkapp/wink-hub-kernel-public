@@ -1,0 +1,30 @@
+From ffedc4251caf73b5cc73cbfc15d2b92e13e1903b Mon Sep 17 00:00:00 2001
+From: Peter Chen <peter.chen@freescale.com>
+Date: Tue, 8 Jan 2013 13:35:48 +0800
+Subject: [PATCH 662/670] ENGR00239205: mx28-usb: disable usb wakeup before
+ module unload
+
+There is unknown wakeup during the module unload for otg
+host module, so disable wakeup interrupt before module unload.
+
+Signed-off-by: Peter Chen <peter.chen@freescale.com>
+---
+ drivers/usb/host/ehci-arc.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/usb/host/ehci-arc.c b/drivers/usb/host/ehci-arc.c
+index 40bb8c3..d2613fe 100644
+--- a/drivers/usb/host/ehci-arc.c
++++ b/drivers/usb/host/ehci-arc.c
+@@ -327,6 +327,8 @@ static void usb_hcd_fsl_remove(struct usb_hcd *hcd,
+ 		if (pdata->usb_clock_for_pm)
+ 			pdata->usb_clock_for_pm(true);
+ 
++		usb_host_set_wakeup(hcd->self.controller, false);
++
+ 		tmp = ehci_readl(ehci, &ehci->regs->port_status[0]);
+ 		if (tmp & PORT_PTS_PHCD) {
+ 			tmp &= ~PORT_PTS_PHCD;
+-- 
+1.8.0
+

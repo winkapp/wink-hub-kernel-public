@@ -1,0 +1,31 @@
+From 42fea62d75611147a3c5843cc559090d0f695bfc Mon Sep 17 00:00:00 2001
+From: Peter Chen <peter.chen@freescale.com>
+Date: Thu, 13 Jan 2011 13:23:30 +0800
+Subject: [PATCH 644/670] ENGR00137927-3 usb-host add vbus ON operation for
+ OTG host driver
+
+The old implementation did not cover the host only driver for
+OTG port situation.
+
+Signed-off-by: Peter Chen <peter.chen@freescale.com>
+---
+ drivers/usb/host/ehci-arc.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/host/ehci-arc.c b/drivers/usb/host/ehci-arc.c
+index c572cb1..16e5785 100644
+--- a/drivers/usb/host/ehci-arc.c
++++ b/drivers/usb/host/ehci-arc.c
+@@ -242,7 +242,8 @@ int usb_hcd_fsl_probe(const struct hc_driver *driver,
+ 		retval = otg_set_host(ehci->transceiver, &ehci_to_hcd(ehci)->self);
+ 		if (retval)
+ 			otg_put_transceiver(ehci->transceiver);
+-	} else if (pdata->operating_mode == FSL_USB2_MPH_HOST)
++	} else if ((pdata->operating_mode == FSL_USB2_MPH_HOST) || \
++			(pdata->operating_mode == FSL_USB2_DR_HOST))
+ 		fsl_platform_set_vbus_power(pdata, 1);
+ 
+ 	if (pdata->suspended) {
+-- 
+1.8.0
+

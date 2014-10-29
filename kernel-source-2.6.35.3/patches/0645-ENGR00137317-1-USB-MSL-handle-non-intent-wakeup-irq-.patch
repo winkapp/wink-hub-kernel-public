@@ -1,0 +1,80 @@
+From 50631db016a86263a356e872251ac8bd8ad54212 Mon Sep 17 00:00:00 2001
+From: Zhang Yan <b34916@freescale.com>
+Date: Fri, 24 Dec 2010 10:42:11 +0800
+Subject: [PATCH 645/670] ENGR00137317-1 USB MSL: handle non-intent wakeup irq
+ triggered by PHCD change
+
+PORTSC PHCD will be changed while system shuts down usb host. This triggers
+wake-up interrupt. But it's not host wake-up or device wake-up. OWIR bit in
+USBCTRL doesn't be cleared. It keeps bring interrupt on. So
+- Clear OWIR bit in wakeup ISR if host/device doesn't need to wake up.
+- Close wakeup irq before shut down USB host.
+
+Signed-off-by: Zhang Yan <b34916@freescale.com>
+---
+ arch/arm/mach-mx5/usb_dr.c     | 5 +++--
+ arch/arm/plat-mxc/usb_wakeup.c | 4 ++++
+ 2 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm/mach-mx5/usb_dr.c b/arch/arm/mach-mx5/usb_dr.c
+index 99e1c78..0e68bcc 100644
+--- a/arch/arm/mach-mx5/usb_dr.c
++++ b/arch/arm/mach-mx5/usb_dr.c
+@@ -27,6 +27,7 @@ static void usbotg_clock_gate(bool on);
+ static struct clk *usb_phy1_clk;
+ static struct clk *usb_oh3_clk;
+ static struct clk *usb_ahb_clk;
++static void usbotg_wakeup_event_clear(void);
+ extern int clk_get_usecount(struct clk *clk);
+ 
+ /* Beginning of Common operation for DR port */
+@@ -52,6 +53,7 @@ static struct fsl_usb2_platform_data dr_utmi_config = {
+ static struct fsl_usb2_wakeup_platform_data dr_wakeup_config = {
+ 	.name = "DR wakeup",
+ 	.usb_clock_for_pm  = usbotg_clock_gate,
++	.usb_wakeup_exhandle = usbotg_wakeup_event_clear,
+ };
+ /* Notes: configure USB clock*/
+ static int usbotg_init_ext(struct platform_device *pdev)
+@@ -174,7 +176,6 @@ static void usbotg_wakeup_event_clear(void)
+ }
+ /* End of Common operation for DR port */
+ 
+-
+ #ifdef CONFIG_USB_EHCI_ARC_OTG
+ extern void fsl_usb_recover_hcd(struct platform_device *pdev);
+ /* Beginning of host related operation for DR port */
+@@ -228,7 +229,6 @@ static void host_wakeup_handler(struct fsl_usb2_platform_data *pdata)
+ /* End of host related operation for DR port */
+ #endif /* CONFIG_USB_EHCI_ARC_OTG */
+ 
+-
+ #ifdef CONFIG_USB_GADGET_ARC
+ /* Beginning of device related operation for DR port */
+ static void _device_wakeup_enable(struct fsl_usb2_platform_data *pdata, bool enable)
+@@ -247,6 +247,7 @@ static void _device_wakeup_enable(struct fsl_usb2_platform_data *pdata, bool ena
+ 		USBCTRL_HOST2 &= ~UCTRL_H2OVBWK_EN;
+ 	}
+ }
++
+ static void _device_phy_lowpower_suspend(struct fsl_usb2_platform_data *pdata, bool enable)
+ {
+ 	__phy_lowpower_suspend(enable, ENABLED_BY_DEVICE);
+diff --git a/arch/arm/plat-mxc/usb_wakeup.c b/arch/arm/plat-mxc/usb_wakeup.c
+index 6f3fc72..9c38c7f 100644
+--- a/arch/arm/plat-mxc/usb_wakeup.c
++++ b/arch/arm/plat-mxc/usb_wakeup.c
+@@ -121,6 +121,10 @@ static void wakeup_event_handler(struct wakeup_ctrl *ctrl)
+ 			}
+ 		}
+ 	}
++	/* If nothing to wakeup, clear wakeup event */
++	if ((already_waked == 0) && pdata->usb_wakeup_exhandle)
++		pdata->usb_wakeup_exhandle();
++
+ 	wakeup_clk_gate(ctrl->pdata, false);
+ 	pdata->usb_wakeup_is_pending = false;
+ 	wake_up(&pdata->wq);
+-- 
+1.8.0
+

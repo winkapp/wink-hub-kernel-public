@@ -1,0 +1,59 @@
+From 29806a5010627cbb1223a65aab5f90ca4980857c Mon Sep 17 00:00:00 2001
+From: Peter Chan <B18700@freescale.com>
+Date: Wed, 5 Dec 2012 17:41:36 +0800
+Subject: [PATCH 628/670] ENGR00235714-3 - MX28 USB certification
+
+The patch include:
+- USB test mode on hub port and Root-hub port
+- support 3 types of message:
+    too much hub ties for hub attachment
+    too much power consumption for device attachment
+    unsupported device class warning
+- support menuconfig select the FSL_USB_TEST_MODE ,located in:
+    -> Device Drivers
+        -> USB support (USB_SUPPORT [=y])
+            -> FSL High-speed Electrical Test Mode Support
+- remove OTG compliant setting
+- power VDDA from LinearReg to reduce USB jitters
+- change default HW_USBPHY_TX & HW_USBPHY_RX values for MX28
+- For USB CV 3.0 test, the gap between the ACK of set_address and
+  the subsequent setup packet may be very little, say 500us, and
+  if the latency we handle the ep completion is greater than this
+  gap, there is no response to the subsequent packet. It will
+  cause CV test fail
+  There is another way to set the address, it should set the bit 24
+  to 1 with the right address, and then IC controller will set the
+  address when the IN req complete instead of SW do it. It is more
+  fast so it can fix the CV 3.0 test fail issue
+
+Signed-off-by: Peter Chan <B18700@freescale.com>
+---
+ arch/arm/plat-mxs/usb_common.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/plat-mxs/usb_common.c b/arch/arm/plat-mxs/usb_common.c
+index 5f6a121..f4ac5b6 100644
+--- a/arch/arm/plat-mxs/usb_common.c
++++ b/arch/arm/plat-mxs/usb_common.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2009-2011 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2009-2012 Freescale Semiconductor, Inc. All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -262,6 +262,11 @@ int usb_phy_enable(struct fsl_usb2_platform_data *pdata)
+ 	__raw_writel(tmp, phy_ctrl);
+ 	udelay(10);
+ 
++#ifdef CONFIG_ARCH_MX28
++	__raw_writel(0x10060605, (phy_reg + HW_USBPHY_TX));
++	__raw_writel(0x1, (phy_reg + HW_USBPHY_RX));
++#endif
++
+ 	/* set UTMI xcvr */
+ 	/* Workaround an IC issue for ehci driver:
+ 	 * when turn off root hub port power, EHCI set
+-- 
+1.8.0
+

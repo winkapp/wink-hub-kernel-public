@@ -1,0 +1,61 @@
+From a0e8d80376957175e959f70aba51a1cae487e414 Mon Sep 17 00:00:00 2001
+From: Huang Shijie <b32955@freescale.com>
+Date: Fri, 6 Jul 2012 10:43:26 +0800
+Subject: [PATCH 604/670] ENGR00215944 mtd: gpmi: reset the gpmi/bch for mx28
+
+We may store the rootfs in the NAND chip.
+From the customer's project, we found that if we do not reset the gpmi/bch,
+the gpmi/bch will become unstable. After the system reboots for many
+times(more than 1000 loops), an BCH's ECC error occurs.
+
+This patch fixes it.
+
+Signed-off-by: Huang Shijie <b32955@freescale.com>
+---
+ drivers/mtd/nand/gpmi-nfc/gpmi-nfc-hal-v1.c | 16 ++++------------
+ 1 file changed, 4 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/mtd/nand/gpmi-nfc/gpmi-nfc-hal-v1.c b/drivers/mtd/nand/gpmi-nfc/gpmi-nfc-hal-v1.c
+index 03c9c5d..6cc2ca2 100644
+--- a/drivers/mtd/nand/gpmi-nfc/gpmi-nfc-hal-v1.c
++++ b/drivers/mtd/nand/gpmi-nfc/gpmi-nfc-hal-v1.c
+@@ -1,7 +1,7 @@
+ /*
+  * Freescale GPMI NFC NAND Flash Driver
+  *
+- * Copyright (C) 2010 Freescale Semiconductor, Inc.
++ * Copyright (C) 2010-2012 Freescale Semiconductor, Inc.
+  * Copyright (C) 2008 Embedded Alley Solutions, Inc.
+  *
+  * This program is free software; you can redistribute it and/or modify
+@@ -47,7 +47,7 @@ static int init(struct gpmi_nfc_data *this)
+ 
+ 	/* Reset the GPMI block. */
+ 
+-	mxs_reset_block(resources->gpmi_regs + HW_GPMI_CTRL0, true);
++	mxs_reset_block(resources->gpmi_regs + HW_GPMI_CTRL0, false);
+ 
+ 	/* Choose NAND mode. */
+ 	__raw_writel(BM_GPMI_CTRL1_GPMI_MODE,
+@@ -107,16 +107,8 @@ static int set_geometry(struct gpmi_nfc_data *this)
+ 
+ 	clk_enable(resources->clock);
+ 
+-	/*
+-	 * Reset the BCH block. Notice that we pass in true for the just_enable
+-	 * flag. This is because the soft reset for the version 0 BCH block
+-	 * doesn't work and the version 1 BCH block is similar enough that we
+-	 * suspect the same (though this has not been officially tested). If you
+-	 * try to soft reset a version 0 BCH block, it becomes unusable until
+-	 * the next hard reset.
+-	 */
+-
+-	mxs_reset_block(resources->bch_regs, true);
++	/* reset the BCH */
++	mxs_reset_block(resources->bch_regs, false);
+ 
+ 	/* Configure layout 0. */
+ 
+-- 
+1.8.0
+

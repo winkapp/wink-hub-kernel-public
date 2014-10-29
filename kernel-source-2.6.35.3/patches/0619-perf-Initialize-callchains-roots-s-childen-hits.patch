@@ -1,0 +1,47 @@
+From d30acba18f54e306f5cd5ba60378ceb90cec0848 Mon Sep 17 00:00:00 2001
+From: Frederic Weisbecker <fweisbec@gmail.com>
+Date: Sun, 22 Aug 2010 04:29:17 +0200
+Subject: [PATCH 619/670] perf: Initialize callchains roots's childen hits
+
+commit 5225c45899e872383ca39f5533d28ec63c54b39e upstream.
+
+Each histogram entry has a callchain root that stores the
+callchain samples. However we forgot to initialize the
+tracking of children hits of these roots, which then got
+random values on their creation.
+
+The root children hits is multiplied by the minimum percentage
+of hits provided by the user, and the result becomes the minimum
+hits expected from children branches. If the random value due
+to the uninitialization is big enough, then this minimum number
+of hits can be huge and eventually filter every children branches.
+
+The end result was invisible callchains. All we need to
+fix this is to initialize the children hits of the root.
+
+Reported-by: Christoph Hellwig <hch@infradead.org>
+Signed-off-by: Frederic Weisbecker <fweisbec@gmail.com>
+Cc: Ingo Molnar <mingo@elte.hu>
+Cc: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Cc: Arnaldo Carvalho de Melo <acme@redhat.com>
+Cc: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+---
+ tools/perf/util/callchain.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/tools/perf/util/callchain.h b/tools/perf/util/callchain.h
+index f2e9ee1..ecb9732 100644
+--- a/tools/perf/util/callchain.h
++++ b/tools/perf/util/callchain.h
+@@ -50,6 +50,7 @@ static inline void callchain_init(struct callchain_node *node)
+ 	INIT_LIST_HEAD(&node->children);
+ 	INIT_LIST_HEAD(&node->val);
+ 
++	node->children_hit = 0;
+ 	node->parent = NULL;
+ 	node->hit = 0;
+ }
+-- 
+1.8.0
+

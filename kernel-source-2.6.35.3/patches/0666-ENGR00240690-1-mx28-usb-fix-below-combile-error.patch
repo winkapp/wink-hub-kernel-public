@@ -1,0 +1,66 @@
+From 57e7b7060bb5aa925eaa400937ed008d28e1e385 Mon Sep 17 00:00:00 2001
+From: Peter Chen <peter.chen@freescale.com>
+Date: Mon, 21 Jan 2013 10:51:50 +0800
+Subject: [PATCH 666/670] ENGR00240690-1: mx28-usb: fix below combile error
+
+For MSL part
+
+USB module compile failed if set menuconfig like this:
+Device Drivers --->
+[*] USB support --->
+<M> EHCI HCD (USB 2.0) support
+< > USB Gadget Support --->
+< > USB OTG pin detect support
+$ make uImage
+CHK     include/linux/version.h
+CHK     include/generated/utsrelease.h
+make[1]: `include/generated/mach-types.h' is up to date.
+CALL    scripts/checksyscalls.sh
+CHK     include/generated/compile.h
+CC      arch/arm/mach-mx28/usb_dr.o
+arch/arm/mach-mx28/usb_dr.c: In function 'enter_phy_lowpower_suspend':
+arch/arm/mach-mx28/usb_dr.c:133:3: error: implicit declaration of
+function 'fsl_safe_writel' [-Werror=implicit-function-declaration]
+arch/arm/mach-mx28/usb_dr.c: At top level:
+arch/arm/mach-mx28/usb_dr.c:529:31: warning: 'dr_udc_device'
+defined but not used [-Wunused-variable]
+cc1: some warnings being treated as errors
+make[1]: *** [arch/arm/mach-mx28/usb_dr.o] Error 1
+make: *** [arch/arm/mach-mx28] Error 2
+
+Signed-off-by: Peter Chen <peter.chen@freescale.com>
+---
+ arch/arm/mach-mx28/Kconfig | 7 +++++++
+ arch/arm/plat-mxs/Kconfig  | 1 +
+ 2 files changed, 8 insertions(+)
+
+diff --git a/arch/arm/mach-mx28/Kconfig b/arch/arm/mach-mx28/Kconfig
+index 8a4b067..d31a140 100644
+--- a/arch/arm/mach-mx28/Kconfig
++++ b/arch/arm/mach-mx28/Kconfig
+@@ -30,3 +30,10 @@ config MX28_SUSPEND_TO_RAM
+ 	depends on ARCH_MX28
+ 	help
+ 	  Say Y to enable suspend-to-RAM
++
++config WORKAROUND_ARCUSB_REG_RW
++        bool "work around mx28 arch register write for USB"
++        help
++           MX28 require read ARC register before write. Use SWP intructure to
++           implement this requirement.
++
+diff --git a/arch/arm/plat-mxs/Kconfig b/arch/arm/plat-mxs/Kconfig
+index 831a24b..9b054c6 100644
+--- a/arch/arm/plat-mxs/Kconfig
++++ b/arch/arm/plat-mxs/Kconfig
+@@ -14,6 +14,7 @@ config ARCH_MX28
+ 	select MXS_DMA_ENGINE
+ 	select MXS_AUART_DMA_SUPPORT
+ 	select ARCH_HAS_CPUFREQ
++	select WORKAROUND_ARCUSB_REG_RW
+ 	---help---
+ 	 Support Freescale MX28 chips
+ 
+-- 
+1.8.0
+

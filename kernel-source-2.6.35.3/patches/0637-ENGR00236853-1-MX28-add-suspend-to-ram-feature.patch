@@ -1,0 +1,367 @@
+From 9845e8864c18da7d43ae3b53c2f49f1112dd7be9 Mon Sep 17 00:00:00 2001
+From: Grace Si <b18730@freescale.com>
+Date: Tue, 18 Dec 2012 11:09:37 +0800
+Subject: [PATCH 637/670] ENGR00236853-1: [MX28] - add suspend-to-ram feature
+
+Add suspend-to-ram feature for MX28. In MX28 suspend-to-ram mode,
+MX28 chip is off, only PWSITCH can resume it.  When resume,
+it performs a cold boot, after bootlet runs,  it will  check the
+persistent to decide whether to jump the specified DRAM address to resume.
+Because it is cold boot, so all the registers values are lost and need be
+restored when resume. The drivers need restore the register values when
+resume from suspend-to-ram.
+
+Signed-off-by: Grace Si <b18730@freescale.com>
+---
+ drivers/i2c/busses/i2c-mxs.c              | 41 ++++++++++++++++++++++++++++--
+ drivers/mtd/nand/gpmi-nfc/gpmi-nfc-main.c | 27 +++++++++++++++++++-
+ drivers/net/fec.c                         | 22 ++++++++++++++++
+ drivers/power/mxs/linux.c                 | 35 ++++++++++++++++++++++++++
+ sound/soc/mxs/mxs-devb.c                  | 42 +++++++++++++++++++++++++++++--
+ 5 files changed, 162 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/i2c/busses/i2c-mxs.c b/drivers/i2c/busses/i2c-mxs.c
+index 852b2ed..5c1be2d 100644
+--- a/drivers/i2c/busses/i2c-mxs.c
++++ b/drivers/i2c/busses/i2c-mxs.c
+@@ -1,6 +1,6 @@
+ /*
+  * Freescale MX28 I2C bus driver
+- * Copyright (C) 2009-2010 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2009-2012 Freescale Semiconductor, Inc. All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -29,7 +29,7 @@
+ #include <linux/dma-mapping.h>
+ #include <linux/clk.h>
+ #include <linux/io.h>
+-
++#include <linux/suspend.h>
+ #include <mach/dmaengine.h>
+ #include <mach/device.h>
+ #include <mach/regs-i2c.h>
+@@ -432,6 +432,40 @@ static const struct i2c_algorithm mxs_i2c_algo = {
+ 	.functionality = mxs_i2c_func,
+ };
+ 
++#ifdef CONFIG_PM
++
++suspend_state_t mxs_pm_get_target(void);
++
++static int mxs_i2c_resume(struct platform_device *pdev)
++{
++	struct mxs_i2c_dev *mxs_i2c = platform_get_drvdata(pdev);
++
++	if (mxs_pm_get_target() == PM_SUSPEND_MEM)  {
++		mxs_reset_block((void __iomem *)mxs_i2c->regbase, 1);
++
++		if (mxs_i2c->flags & MXS_I2C_PIOQUEUE_MODE)
++			__raw_writel(0x04, mxs_i2c->regbase + HW_I2C_QUEUECTRL_SET);
++
++		/* Will catch all error (IRQ mask) */
++		__raw_writel(0x0000FF00, mxs_i2c->regbase + HW_I2C_CTRL1_SET);
++
++
++		hw_i2c_dmachan_reset(mxs_i2c);
++		mxs_dma_enable_irq(mxs_i2c->dma_chan, 1);
++  }
++
++	return 0;
++}
++static int mxs_i2c_suspend(struct platform_device *pdev)
++{
++	return 0;
++}
++
++#else
++#define mxs_i2c_suspend NULL
++#define mxs_i2c_resume  NULL
++#endif
++
+ static int mxs_i2c_probe(struct platform_device *pdev)
+ {
+ 	struct mxs_i2c_dev *mxs_i2c;
+@@ -590,6 +624,9 @@ static struct platform_driver mxs_i2c_driver = {
+ 		   },
+ 	.probe = mxs_i2c_probe,
+ 	.remove = __devexit_p(mxs_i2c_remove),
++	.suspend = mxs_i2c_suspend,
++	.resume = mxs_i2c_resume,
++
+ };
+ 
+ static int __init mxs_i2c_init(void)
+diff --git a/drivers/mtd/nand/gpmi-nfc/gpmi-nfc-main.c b/drivers/mtd/nand/gpmi-nfc/gpmi-nfc-main.c
+index be9e1a7..ad6c218 100644
+--- a/drivers/mtd/nand/gpmi-nfc/gpmi-nfc-main.c
++++ b/drivers/mtd/nand/gpmi-nfc/gpmi-nfc-main.c
+@@ -1,7 +1,7 @@
+ /*
+  * Freescale GPMI NFC NAND Flash Driver
+  *
+- * Copyright (C) 2010 Freescale Semiconductor, Inc.
++ * Copyright (C) 2012 Freescale Semiconductor, Inc.
+  * Copyright (C) 2008 Embedded Alley Solutions, Inc.
+  *
+  * This program is free software; you can redistribute it and/or modify
+@@ -22,6 +22,7 @@
+ #include <linux/slab.h>
+ #include "gpmi-nfc.h"
+ #include "linux/slab.h"
++#include <linux/suspend.h>
+ 
+ static int enable_gpmi_nand = { 0 };
+ 
+@@ -1832,8 +1833,15 @@ static int __exit gpmi_nfc_remove(struct platform_device *pdev)
+ 	return 0;
+ }
+ 
++
+ #ifdef CONFIG_PM
+ 
++#ifdef CONFIG_ARCH_MXS
++
++suspend_state_t mxs_pm_get_target(void);
++
++#endif
++
+ /**
+  * gpmi_nfc_suspend() - Puts the NFC into a low power state.
+  *
+@@ -1842,6 +1850,15 @@ static int __exit gpmi_nfc_remove(struct platform_device *pdev)
+  */
+ static int gpmi_nfc_suspend(struct platform_device *pdev, pm_message_t state)
+ {
++
++#ifdef CONFIG_ARCH_MXS
++	if (mxs_pm_get_target() == PM_SUSPEND_MEM)  {
++		struct gpmi_nfc_data           *this = platform_get_drvdata(pdev);
++
++		gpmi_nfc_mil_exit(this);
++		this->nfc->exit(this);
++	}
++#endif
+ 	return 0;
+ }
+ 
+@@ -1852,6 +1869,14 @@ static int gpmi_nfc_suspend(struct platform_device *pdev, pm_message_t state)
+  */
+ static int gpmi_nfc_resume(struct platform_device *pdev)
+ {
++#ifdef CONFIG_ARCH_MX28
++	if (mxs_pm_get_target() == PM_SUSPEND_MEM)  {
++		struct gpmi_nfc_data           *this = platform_get_drvdata(pdev);
++
++		set_up_nfc_hal(this);
++		gpmi_nfc_mil_init(this);
++	}
++#endif
+ 	return 0;
+ }
+ 
+diff --git a/drivers/net/fec.c b/drivers/net/fec.c
+index 3629e7f..5cd7418 100644
+--- a/drivers/net/fec.c
++++ b/drivers/net/fec.c
+@@ -46,6 +46,7 @@
+ #include <linux/swab.h>
+ #include <linux/phy.h>
+ #include <linux/fec.h>
++#include <linux/suspend.h>
+ 
+ #include <asm/cacheflush.h>
+ 
+@@ -1635,19 +1636,40 @@ fec_suspend(struct platform_device *dev, pm_message_t state)
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_ARCH_MXS
++
++suspend_state_t mxs_pm_get_target(void);
++
++#endif
++
++
+ static int
+ fec_resume(struct platform_device *dev)
+ {
+ 	struct net_device *ndev = platform_get_drvdata(dev);
++  struct fec_platform_data *pdata;
+ 	struct fec_enet_private *fep;
+ 
+ 	if (ndev) {
+ 		fep = netdev_priv(ndev);
++    pdata = fep->pdev->dev.platform_data;
+ 		if (netif_running(ndev)) {
+ 			clk_enable(fep->clk);
+ 			fec_restart(ndev, fep->full_duplex);
+ 			netif_device_attach(ndev);
+ 		}
++    else {
++#ifdef CONFIG_ARCH_MXS
++			if (mxs_pm_get_target() == PM_SUSPEND_MEM)  {
++				clk_enable(fep->clk);
++				/* PHY reset should be done during clock on */
++				if (pdata && pdata->init)
++					pdata->init();
++				fec_restart(ndev, 0);
++				clk_disable(fep->clk);
++      }
++#endif
++    }
+ 	}
+ 	return 0;
+ }
+diff --git a/drivers/power/mxs/linux.c b/drivers/power/mxs/linux.c
+index 5a30404..bb283aa 100644
+--- a/drivers/power/mxs/linux.c
++++ b/drivers/power/mxs/linux.c
+@@ -19,6 +19,7 @@
+ #include <linux/io.h>
+ #include <linux/sched.h>
+ #include <linux/clk.h>
++#include <linux/suspend.h>
+ #include <mach/ddi_bc.h>
+ #include "ddi_bc_internal.h"
+ #include <linux/regulator/consumer.h>
+@@ -83,6 +84,7 @@ struct mxs_info {
+ #define NO_VDD5V_SOURCE 0x02
+ 	int powersource;
+ 	int is_5v_irq_detected;
++	u32	clks[10];
+ };
+ 
+ #define to_mxs_info(x) container_of((x), struct mxs_info, bat)
+@@ -1092,6 +1094,36 @@ static void mxs_bat_shutdown(struct platform_device *pdev)
+ 
+ #ifdef CONFIG_PM
+ 
++suspend_state_t mxs_pm_get_target(void);
++
++static u32 power_clk_regs[] = {
++		HW_POWER_CTRL,
++		HW_POWER_5VCTRL,
++		HW_POWER_VDDDCTRL,
++		HW_POWER_VDDACTRL,
++		HW_POWER_VDDIOCTRL,
++};
++
++void backup_power_reg(struct mxs_info *info)
++{
++	int i;
++
++	if (mxs_pm_get_target() == PM_SUSPEND_MEM)  {
++		for (i = 0; i < ARRAY_SIZE(power_clk_regs); i++)
++			info->clks[i] = __raw_readl(REGS_POWER_BASE +	power_clk_regs[i]);
++  }
++}
++
++void resume_power_reg(struct mxs_info *info)
++{
++	int i;
++
++	if (mxs_pm_get_target() == PM_SUSPEND_MEM) {
++		for (i = 0; i < ARRAY_SIZE(power_clk_regs); i++)
++				__raw_writel(info->clks[i], REGS_POWER_BASE +	power_clk_regs[i]);
++	}
++}
++
+ static int mxs_bat_suspend(struct platform_device *pdev, pm_message_t msg)
+ {
+ 	struct mxs_info *info = platform_get_drvdata(pdev);
+@@ -1104,6 +1136,8 @@ static int mxs_bat_suspend(struct platform_device *pdev, pm_message_t msg)
+ 	/* cancel state machine timer */
+ 	del_timer_sync(&info->sm_timer);
+ 
++	backup_power_reg(info);
++
+ 	mutex_unlock(&info->sm_lock);
+ 	return 0;
+ }
+@@ -1115,6 +1149,7 @@ static int mxs_bat_resume(struct platform_device *pdev)
+ 
+ 	mutex_lock(&info->sm_lock);
+ 
++	resume_power_reg(info);
+ 	if (is_ac_online()) {
+ 		/* ac supply connected */
+ 		dev_dbg(info->dev, "ac/5v present, enabling state machine\n");
+diff --git a/sound/soc/mxs/mxs-devb.c b/sound/soc/mxs/mxs-devb.c
+index 6847c54..0e782f0 100644
+--- a/sound/soc/mxs/mxs-devb.c
++++ b/sound/soc/mxs/mxs-devb.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2010 Freescale Semiconductor, Inc. All Rights Reserved.
++ * Copyright (C) 2012 Freescale Semiconductor, Inc. All Rights Reserved.
+  *
+  * This program is free software; you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+@@ -34,7 +34,7 @@
+ #include <sound/soc.h>
+ #include <sound/soc-dapm.h>
+ #include <sound/initval.h>
+-
++#include <linux/suspend.h>
+ #include <mach/dma.h>
+ #include <mach/device.h>
+ 
+@@ -236,9 +236,46 @@ static int mxs_evk_sgtl5000_remove(struct platform_device *pdev)
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_PM
++
++suspend_state_t mxs_pm_get_target(void);
++
++
++static int mxs_evk_sgtl5000_resume(struct platform_device *pdev)
++{
++	struct mxs_audio_platform_data *plat = pdev->dev.platform_data;
++
++	if (mxs_pm_get_target() == PM_SUSPEND_MEM) {
++		if (plat->init)
++			plat->init();
++  }
++
++	return 0;
++}
++static int mxs_evk_sgtl5000_suspend(struct platform_device *pdev)
++{
++	struct mxs_audio_platform_data *plat = pdev->dev.platform_data;
++
++	if (mxs_pm_get_target() == PM_SUSPEND_MEM) {
++		if (plat->finit)
++			plat->finit();
++  }
++
++	return 0;
++}
++
++#else
++#define mxs_evk_sgtl5000_suspend NULL
++#define mxs_evk_sgtl5000_resume  NULL
++#endif
++
++
+ static struct platform_driver mxs_evk_sgtl5000_audio_driver = {
+ 	.probe = mxs_evk_sgtl5000_probe,
+ 	.remove = mxs_evk_sgtl5000_remove,
++	.suspend = mxs_evk_sgtl5000_suspend,
++	.resume = mxs_evk_sgtl5000_resume,
++
+ 	.driver = {
+ 		   .name = "mxs-sgtl5000",
+ 		   },
+@@ -250,6 +287,7 @@ static int __init mxs_evk_init(void)
+ {
+ 	int ret;
+ 
++
+ 	ret = platform_driver_register(&mxs_evk_sgtl5000_audio_driver);
+ 	if (ret)
+ 		return -ENOMEM;
+-- 
+1.8.0
+

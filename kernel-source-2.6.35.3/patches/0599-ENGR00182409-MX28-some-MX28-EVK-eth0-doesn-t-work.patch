@@ -1,0 +1,49 @@
+From 71dda81c8b98ef7fdae4f1076c417e3ca4b0c929 Mon Sep 17 00:00:00 2001
+From: Grace Si <b18730@freescale.com>
+Date: Thu, 17 May 2012 09:10:44 +0800
+Subject: [PATCH 599/670] ENGR00182409 [MX28] some MX28 EVK eth0 doesn't work.
+
+On MX28 EVK board, the PHY REF_CLK is from MX28 ENET_CLK which will be turn off
+when eth is not used. So when ENET_CLK is on, we also need reset PHY
+before ENET controller is reset.
+
+Signed-off-by: Grace Si <b18730@freescale.com>
+---
+ drivers/net/fec.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/fec.c b/drivers/net/fec.c
+index d0e2e69..6f23954 100644
+--- a/drivers/net/fec.c
++++ b/drivers/net/fec.c
+@@ -19,7 +19,7 @@
+  * Copyright (c) 2004-2006 Macq Electronique SA.
+  *
+  * Support for FEC IEEE 1588.
+- * Copyright (C) 2010 Freescale Semiconductor, Inc.
++ * Copyright (C) 2012 Freescale Semiconductor, Inc.
+  */
+ 
+ #include <linux/module.h>
+@@ -1267,12 +1267,18 @@ static void
+ fec_restart(struct net_device *dev, int duplex)
+ {
+ 	struct fec_enet_private *fep = netdev_priv(dev);
++	struct fec_platform_data *pdata = fep->pdev->dev.platform_data;
+ 	int i;
+ 	uint ret = 0;
+ 	u32 temp_mac[2];
+ 	unsigned long reg;
+ 	int val;
+ 
++#ifdef CONFIG_ARCH_MXS
++	if (pdata && pdata->init)
++		ret = pdata->init();
++#endif
++
+ 	/* Whack a reset.  We should wait for this. */
+ 	writel(1, fep->hwp + FEC_ECNTRL);
+ 	udelay(10);
+-- 
+1.8.0
+
